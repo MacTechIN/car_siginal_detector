@@ -91,6 +91,7 @@ class AlertQueue:
         self.speaker = None
         # (time, text, priority) of alerts actually spoken, newest last (shown as captions)
         self.spoken: list[tuple[float, str, int]] = []
+        self._last_busy = 0.0
 
     def start(self) -> "AlertQueue":
         ready = threading.Event()
@@ -132,6 +133,8 @@ class AlertQueue:
                     self._cv.wait(0.1)
                     if self.speaker and not self.speaker.busy():
                         self._current_priority = 99
+                    elif self.speaker:
+                        self._last_busy = time.time()
                 if self._stop:
                     return
                 alert = heapq.heappop(self._heap)
@@ -141,6 +144,7 @@ class AlertQueue:
             if busy and alert.priority >= self._current_priority:
                 # Less or equally urgent: wait for the current sentence to end.
                 while self.speaker.busy() and not self._stop:
+                    self._last_busy = time.time()
                     time.sleep(0.05)
                     with self._cv:
                         if self._heap and self._heap[0].priority < alert.priority:
@@ -156,10 +160,21 @@ class AlertQueue:
             log.debug("TTS[%d] %s", alert.priority, alert.text)
             self.spoken.append((time.time(), alert.text, alert.priority))
             del self.spoken[:-50]
+            self._last_busy = time.time()
             try:
                 self.speaker.speak(alert.text, interrupt=busy)
             except Exception as e:
                 log.warning("TTS speak failed: %s", e)
+
+    def speaking_recently(self, margin_s: float = 0.8) -> bool:
+        """True while an alert is being spoken or ended less than `margin_s` ago
+        (used to keep the voice-label microphone from hearing our own alerts)."""
+        # Only the TTS thread touches the SAPI object (COM apartment); it keeps
+        # _last_busy up to date while speaking, polling every 0.1 s.
+        now = time.time()
+        if self.spoken and now - self.spoken[-1][0] < 0.3:
+            return True  # just handed to the speaker, may not report busy yet
+        return now - self._last_busy < margin_s + 0.15
 
     def close(self) -> None:
         with self._cv:

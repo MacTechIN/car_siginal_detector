@@ -46,6 +46,7 @@ class _TrackState:
         self.plate_future = None
         self.collision = "none"
         self.ttc: float | None = None
+        self.last_pred: str | None = None  # latest per-frame light state (before smoothing)
         self.last_seen = 0.0
 
 
@@ -77,6 +78,11 @@ class Pipeline:
                 self.plates = PlateReader(cfgmod.resolve(cfg["plate"]["model_dir"]))
             except Exception as e:
                 log.warning("plate reader disabled: %s", e)
+        from .tl_classifier import load_if_present
+        self.tl_cls = load_if_present(cfgmod.resolve(cfg["traffic_light"].get("classifier", "models/tl_cls.pt")))
+        # Voice labelling (set by run() when --label-voice is used)
+        self.labeler = None
+        self.label_session = None
         self.tracks: dict[int, _TrackState] = {}
         self.lead_id: int | None = None
         self.relevant_light: int | None = None
@@ -152,9 +158,24 @@ class Pipeline:
                 self._vehicle(d, ts, frame, t, W, is_lead=d.tid == self.lead_id)
 
         self._scene(dets, t)
+        self._voice_labels(frame, dets, t)
         self._expire(t)
         self.last_dets = dets
         return dets
+
+    def _voice_labels(self, frame, dets: list[Detection], t: float) -> None:
+        if self.label_session is None:
+            return
+        light = next((d for d in dets if d.tid == self.relevant_light), None)
+        ts = self.tracks.get(self.relevant_light) if light else None
+        pred = (ts.light.confirmed or ts.last_pred) if ts else None
+        self.label_session.add_frame(t, frame, light.box if light else None, light.tid if light else None, pred)
+        if self.labeler is not None:
+            while not self.labeler.labels.empty():
+                self.label_session.submit(self.labeler.labels.get_nowait())
+        for text in self.label_session.process(t):
+            # Spoken confirmation so the driver never has to look at the screen.
+            self.voice.say(text, INFO, key="voice_label", cooldown_s=0)
 
     def _relevant_light(self, dets: list[Detection]) -> int | None:
         """The traffic light that applies to us: the largest vehicle-signal head."""
@@ -172,11 +193,19 @@ class Pipeline:
         x1, y1, x2, y2 = (int(v) for v in d.box)
         if min(x2 - x1, y2 - y1) < self.cfg["traffic_light"]["min_box_px"]:
             return
-        reading = classify_light(frame[y1:y2, x1:x2])
-        if reading.state == "unknown":
-            return
-        state = ts.flash.update(reading.state, t)
-        confirmed = ts.light.update(state, t, weight=max(reading.confidence, 0.2))
+        # Learned classifier (if trained) first; rules as fallback for unsure predictions.
+        raw, weight = None, 0.2
+        if self.tl_cls is not None:
+            raw, conf = self.tl_cls.predict(frame, d.box)
+            weight = conf
+        if raw is None:
+            reading = classify_light(frame[y1:y2, x1:x2])
+            if reading.state == "unknown":
+                return
+            raw, weight = reading.state, max(reading.confidence, 0.2)
+        ts.last_pred = raw
+        state = ts.flash.update(raw, t)
+        confirmed = ts.light.update(state, t, weight=weight)
         if confirmed:
             self.events.emit(d.tid, d.name, confirmed)
             if speak:
@@ -281,26 +310,77 @@ class Pipeline:
 
     def close(self) -> None:
         self._plate_pool.shutdown(wait=False, cancel_futures=True)
+        if self.labeler is not None:
+            self.labeler.stop()
+        if self.label_session is not None:
+            self.label_session.close()
         self.voice.close()
         self.events.close()
 
 
+def _wait_for_camera(cfg: dict, pipe: Pipeline, stop: dict, max_seconds: float | None) -> str | None:
+    """Find the camera, retrying (with a spoken hint) until found, stopped or timed out."""
+    from .discover import find_camera
+
+    cam = cfg["camera"]
+    t0, tries = time.time(), 0
+    while not stop["flag"] and not (max_seconds and time.time() - t0 > max_seconds):
+        base = find_camera(cam["base_url"], allow_scan=cam.get("scan_subnet", True))
+        if base:
+            return base
+        tries += 1
+        log.warning("camera not found; retrying")
+        pipe.voice.say("카메라를 찾는 중입니다. 카메라 전원과 와이파이를 확인하세요", INFO, key="cam_missing",
+                       cooldown_s=20)
+        time.sleep(3 if tries < 5 else 8)
+    return None
+
+
 def run(cfg: dict, source: str | None = None, max_seconds: float | None = None, speak: bool = True,
-        show: bool | None = None, snapshot: str | None = None) -> Pipeline:
+        show: bool | None = None, snapshot: str | None = None, realtime: bool = False,
+        record: bool = False, label_voice: bool = False, name: str = "", fullscreen: bool = False) -> Pipeline:
     show = cfg.get("show", False) if show is None else show
     cam = cfg["camera"]
-    if source:
-        src = FileSource(source).start()
-    else:
-        if cam.get("apply_settings"):
-            status = apply_settings(cam["base_url"], cam["settings"])
-            log.info("camera status: framesize=%s quality=%s", status.get("framesize"), status.get("quality"))
-        src = MjpegStream(cam["stream_url"]).start()
-
     pipe = Pipeline(cfg, speak=speak)
-    pipe.voice.say("차량 신호 감지를 시작합니다", INFO, key="start")
     stop = {"flag": False}
     signal.signal(signal.SIGINT, lambda *_: stop.update(flag=True))
+
+    recorder = None
+    if source:
+        src = FileSource(source, realtime=realtime).start()
+        session_dir = cfgmod.resolve(source) if cfgmod.resolve(source).is_dir() else None
+    else:
+        from .discover import stream_url
+        base = _wait_for_camera(cfg, pipe, stop, max_seconds) if cam.get("auto_discover", True) else cam["base_url"]
+        if base is None:
+            pipe.close()
+            return pipe
+        cfg["camera"]["base_url"] = base
+        if cam.get("apply_settings"):
+            status = apply_settings(base, cam["settings"])
+            log.info("camera %s: framesize=%s quality=%s", base, status.get("framesize"), status.get("quality"))
+        if record or label_voice:
+            from .recorder import Recorder
+            recorder = Recorder.new_session(cfgmod.resolve(cfg.get("record_dir", "recordings")), name)
+            recorder.meta.update({"url": stream_url(base), "camera_settings": cam["settings"]})
+            log.info("recording to %s", recorder.folder)
+        src = MjpegStream(stream_url(base), on_jpeg=recorder.add if recorder else None).start()
+        session_dir = recorder.folder if recorder else None
+
+    if label_voice:
+        from .labeling import LabelSession
+        from .voice_label import VoiceLabeler
+        if session_dir is None:
+            session_dir = cfgmod.resolve("recordings") / time.strftime("%Y%m%d_%H%M%S_labels")
+        pipe.label_session = LabelSession(session_dir)
+        vl = cfg.get("voice_label", {})
+        pipe.labeler = VoiceLabeler(cfgmod.resolve(vl.get("model", "models/vosk-model-small-ko-0.22")),
+                                    is_muted=pipe.voice.speaking_recently, device=vl.get("device")).start()
+
+    start_msg = "차량 신호 감지를 시작합니다"
+    if label_voice:
+        start_msg += ". 신호등 상태를 말씀하시면 학습 데이터로 저장합니다"
+    pipe.voice.say(start_msg, INFO, key="start")
 
     dashboard = None
     if show or snapshot:
@@ -308,6 +388,8 @@ def run(cfg: dict, source: str | None = None, max_seconds: float | None = None, 
         dashboard = Dashboard()
         if show:
             cv2.namedWindow("car_siginal_detector", cv2.WINDOW_NORMAL)
+            if fullscreen:
+                cv2.setWindowProperty("car_siginal_detector", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
 
     seq, t_start, n = -1, time.time(), 0
     screen = None
@@ -332,9 +414,16 @@ def run(cfg: dict, source: str | None = None, max_seconds: float | None = None, 
                     break
     finally:
         if snapshot and screen is not None:
-            cv2.imwrite(str(snapshot), screen)
+            from .labeling import imwrite_any
+            from pathlib import Path
+            imwrite_any(Path(snapshot), screen)
             log.info("dashboard snapshot saved: %s", snapshot)
         src.stop()
+        if recorder is not None:
+            meta = recorder.close(labels=dict(pipe.label_session.counts) if pipe.label_session else {})
+            log.info("recording saved: %s (%d frames, %.0f s)", recorder.folder, meta["frames"], meta["duration_s"])
+        if pipe.label_session is not None:
+            log.info("voice labels this session: %s", dict(pipe.label_session.counts) or "none")
         pipe.close()
         if show:
             cv2.destroyAllWindows()
@@ -345,14 +434,22 @@ def run(cfg: dict, source: str | None = None, max_seconds: float | None = None, 
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser(prog="python -m csd", description="ESP32-CAM traffic signal & vehicle state detector")
     ap.add_argument("--config", help="YAML file overriding configs/default.yaml")
-    ap.add_argument("--source", help="video file or image folder instead of the camera stream")
+    ap.add_argument("--source", help="recording folder (tools/record.py), image folder or video file")
+    ap.add_argument("--realtime", action="store_true",
+                    help="with --source: replay at recorded speed and skip late frames, like live")
     ap.add_argument("--show", action="store_true", help="open the driving-situation monitor window (q/Esc to quit)")
     ap.add_argument("--snapshot", help="save the last monitor screen to this PNG path on exit")
+    ap.add_argument("--fullscreen", action="store_true", help="with --show: full-screen monitor window")
     ap.add_argument("--no-voice", action="store_true", help="disable voice alerts")
+    ap.add_argument("--record", action="store_true", help="save the camera stream to recordings/<time>")
+    ap.add_argument("--label-voice", action="store_true",
+                    help="hands-free training labels: say the light state (빨간불, 좌회전, ...); implies --record")
+    ap.add_argument("--name", default="", help="label appended to the recording folder name")
     ap.add_argument("--seconds", type=float, help="stop after N seconds")
     ap.add_argument("-v", "--verbose", action="store_true")
     a = ap.parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if a.verbose else logging.INFO,
                         format="%(asctime)s %(levelname).1s %(name)s: %(message)s", datefmt="%H:%M:%S")
     cfg = cfgmod.load(a.config)
-    run(cfg, a.source, a.seconds, speak=not a.no_voice, show=a.show or None, snapshot=a.snapshot)
+    run(cfg, a.source, a.seconds, speak=not a.no_voice, show=a.show or None, snapshot=a.snapshot,
+        realtime=a.realtime, record=a.record, label_voice=a.label_voice, name=a.name, fullscreen=a.fullscreen)

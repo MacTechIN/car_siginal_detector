@@ -27,7 +27,10 @@
 | 영상 처리 | OpenCV | 5.0 | 차선, 광류, HSV 판별 |
 | 번호판 | sauce-hug/korean-license-plate-detector YOLO 3종 | HF `best.pt` | 백그라운드 스레드에서 실행 |
 | 음성 | Windows **SAPI5** (pywin32 312), 음성 **Microsoft Heami** | | 오프라인 |
-| 모니터 | OpenCV 창 + **Pillow**(맑은 고딕으로 한글 렌더링) | Pillow 12.3 | `--show` |
+| 모니터 | OpenCV 창 + **Pillow**(맑은 고딕으로 한글 렌더링) | Pillow 12.3 | `--show`, `--fullscreen` |
+| 음성 라벨링 | **Vosk** `vosk-model-small-ko-0.22` (오프라인 한국어, 문장 목록 모드) + sounddevice | vosk 0.3.x | 방해 단어 + 정확 일치 규칙 |
+| 신호등 분류기 학습 | Ultralytics **YOLO26n-cls** 파인튜닝 (96×96 정사각 크롭) | | `tools/train_tl.py` → `models/tl_cls.pt` |
+| 카메라 연결 | 펌웨어: 알려진 Wi-Fi → 실패 시 AP `CSD-CAM`, mDNS `esp32cam` / PC: `discover.py` 자동 탐색 | | |
 | 선택 가속 | OpenVINO 2026.4, onnxruntime 1.30 | | 배터리 모드에서는 이득 없음 (research.md 6장) |
 | 테스트 | pytest 9 | 48 tests | 합성 이미지·시계열 기반 |
 
@@ -60,10 +63,22 @@ car_siginal_detector/
 │  ├─ messages.py       한국어 안내 문구와 우선순위
 │  ├─ tts.py            SAPI 음성 우선순위 큐
 │  ├─ overlay.py        영상 위 박스, 궤적, 차선, 진행 방향
-│  └─ dashboard.py      운전 상황 모니터 (자막, 상황판, 로그)
-├─ tests/               단위 테스트 (카메라와 모델 없이 실행)
-├─ tools/fetch_models.py 모델 다운로드
-└─ models/  logs/  scratch/   (git 제외)
+│  ├─ dashboard.py      운전 상황 모니터 (자막, 상황판, 로그, 음성 라벨 상태)
+│  ├─ discover.py       카메라 자동 탐색 (설정 주소 → AP → mDNS → 서브넷)
+│  ├─ recorder.py       녹화 세션 (원본 JPEG + timestamps.csv + meta.json)
+│  ├─ voice_label.py    마이크 → Vosk → 라벨 (자기 음성 차단)
+│  ├─ labeling.py       라벨 시점 전후 신호등 크롭 저장, 취소/맞아 처리
+│  └─ tl_classifier.py  학습된 신호등 분류기 (있으면 우선 사용)
+├─ tests/               단위·통합 테스트 (카메라 없이 실행, 음성 테스트는 합성 음성 사용)
+├─ tools/
+│  ├─ fetch_models.py   모델 다운로드 (YOLO, 번호판, Vosk)
+│  ├─ record.py         녹화 전용
+│  ├─ preflight.py      출발 전 점검 (전원, 디스크, 모델, 음성, 마이크, 카메라 fps)
+│  ├─ build_tl_dataset.py  크롭 → dataset/tl_cls/{train,val} (라벨 이벤트 단위 분할)
+│  ├─ train_tl.py       분류기 학습 → models/tl_cls.pt
+│  └─ eval_voice_labels.py 합성 음성으로 음성 라벨 인식률 평가
+├─ demo.bat  train.bat  시연 / 학습 실행 파일
+└─ models/  logs/  recordings/  dataset/  data/  runs/  scratch/   (git 제외)
 ```
 
 ## 4. 처리 흐름 (프레임 1장)
@@ -90,6 +105,34 @@ Dashboard.render() → OpenCV 창 (--show)
 - 모든 시간 판단(평활화, 점멸, 깜빡임, TTC)은 **프레임 도착 시각**을 기준으로 합니다.
 - Wi-Fi 때문에 프레임 간격이 고르지 않아도 동작합니다.
 - 처리가 느리면 중간 프레임을 버리고 항상 최신 프레임을 처리합니다.
+
+## 4-1. 학습 데이터 수집과 학습 흐름
+
+```
+운전 중 (demo.bat = --show --label-voice)
+  카메라 ─MJPEG─▶ MjpegStream ─원본 JPEG─▶ Recorder: recordings/<세션>/000123.jpg + timestamps.csv
+                              └─프레임─▶ Pipeline ─관련 신호등 박스·판별값─▶ LabelSession 버퍼(최근 약 3.6초)
+  마이크 ─▶ VoiceLabeler(Vosk, 문장 목록 모드)
+            · 안내 음성 재생 중(+0.8초)에는 오디오 폐기
+            · 발화 전체가 라벨 문장과 정확히 같을 때만 채택
+          ─ VoiceLabel(시작 시각, 라벨) ─▶ LabelSession
+            · 발화 시작 −1.0초 ~ +0.6초 프레임에서 신호등 크롭 최대 8장
+            · 여백 15% + 정사각 레터박스 96px → crops/<클래스>/<이벤트ms>_<트랙>_<k>.jpg
+            · labels.csv 한 줄 기록, "빨간불 5장 저장" 음성 확인
+            · "취소"는 직전 라벨 삭제, "맞아"는 현재 판별값을 라벨로 사용
+시연 후 (train.bat)
+  build_tl_dataset.py : recordings/*/crops + data/extra_tl → dataset/tl_cls/{train,val}
+                        (같은 라벨 이벤트는 한쪽에만 들어가게 분할, 20:80)
+  train_tl.py         : YOLO26n-cls 96px, 색상 보존 증강(hue 변화·좌우반전 없음, 크롭 90~100%)
+                        → models/tl_cls.pt + tl_cls.json(top1, 클래스 목록)
+다음 실행
+  Pipeline → TLClassifier(확신도 0.6 이상) 우선, 미만이면 규칙 판별 → FlashTracker → StateSmoother
+```
+
+- 점멸 라벨(`flashing_*`)은 **크롭을 저장하지 않고** labels.csv에 이벤트만 기록합니다.
+  - 저장 구간에 꺼진 순간의 프레임이 섞여 프레임 단위 클래스를 오염시키기 때문입니다.
+  - 점멸 판정은 계속 시간축(FlashTracker)으로 합니다.
+  - 기록된 이벤트는 FlashTracker 임계값 검증에 씁니다.
 
 ## 5. 핵심 알고리즘 매개변수
 

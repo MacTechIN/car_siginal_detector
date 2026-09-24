@@ -20,10 +20,11 @@ python -m venv .venv
 | 문서 | 내용 |
 |---|---|
 | [HANDOVER.md](HANDOVER.md) | **인수인계서**: 현재 상태, 실행 방법, 환경 특이사항, 알려진 문제, 다음 할 일 |
+| [DEMO.md](DEMO.md) | **차량 시연 절차**: `demo.bat`, 카메라 자체 Wi-Fi 연결, 음성 라벨링, `train.bat` |
 | [app_spec.md](app_spec.md) | 앱 기능 명세 |
 | [research.md](research.md) | 인식 방법 조사 (근거, 수치, 라이선스) |
 | [architech.md](architech.md) | 기술 스택과 구조 |
 | [dev_plan.md](dev_plan.md) | 개발 계획 (마이크로 단계)과 진행 상태 |
 | [history.md](history.md) | 작업 이력 |
 
-라이선스 주의: 검출기로 쓰는 Ultralytics YOLO는 AGPL-3.0입니다. 자세한 내용은 research.md 10장을 참고하세요.
+라이선스 주의: 검출기로 쓰는 Ultralytics YOLO는 AGPL-3.0입니다. 자세한 내용은 research.md 11장을 참고하세요.

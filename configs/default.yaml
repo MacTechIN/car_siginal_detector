@@ -1,8 +1,11 @@
 # car_siginal_detector settings. Override with: python -m csd --config my.yaml
 camera:
-  # ESP32-CAM running CameraWebServer (esp32_cam/firmware/camera_web_server)
+  # ESP32-CAM running CameraWebServer (esp32_cam/firmware/camera_web_server).
+  # Tried first; then the camera's own AP (192.168.4.1, Wi-Fi "CSD-CAM"), esp32cam.local,
+  # and a scan of the laptop's subnet (see csd/discover.py). stream = <base>:81/stream
   base_url: http://192.168.45.138
-  stream_url: http://192.168.45.138:81/stream
+  auto_discover: true
+  scan_subnet: true
   apply_settings: true
   # Sent to /control?var=..&val=.. at start-up. See research.md 5장 for the reasons.
   settings:
@@ -26,6 +29,7 @@ detector:
   tracker: configs/tracker.yaml
 
 traffic_light:
+  classifier: models/tl_cls.pt   # used when present (tools/train_tl.py), else rule-based
   min_box_px: 6              # ignore heads smaller than this (short side)
   smooth_window_s: 1.0
   smooth_hold_s: 0.3
@@ -59,5 +63,10 @@ tts:
   cooldown_s: 8
   max_age_s: 2.5
 
+voice_label:
+  model: models/vosk-model-small-ko-0.22   # offline Korean speech recognition
+  device: null               # microphone (sounddevice index or name); null = Windows default
+
 log_dir: logs
+record_dir: recordings
 show: false                  # OpenCV window with overlays

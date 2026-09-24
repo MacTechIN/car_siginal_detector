@@ -5,6 +5,9 @@ requests>=2.31
 pyyaml>=6.0
 pywin32>=306; sys_platform == "win32"
 lap>=0.5            # ByteTrack association (installed on demand by ultralytics otherwise)
+vosk>=0.3.45        # offline Korean speech recognition for voice labelling
+sounddevice>=0.4    # microphone capture
+psutil>=5.9         # battery check in tools/preflight.py
 openvino>=2025.0    # optional: model.export(format="openvino")
 onnxruntime>=1.18   # optional: ONNX backend
 pytest>=8.0

@@ -273,6 +273,19 @@ class Dashboard:
         d.text((16, y + 6), '이벤트 로그   id : [이름] : "상태"', font=self.f_small, fill=DIM)
         status = f"{time.strftime('%H:%M:%S')}   {pipe.fps:4.1f} fps   자차 {EGO_KO.get(pipe.ego_state, pipe.ego_state)}"
         d.text((WIN_W - 330, y + 6), status, font=self.f_small, fill=DIM)
+        labeler = getattr(pipe, "labeler", None)
+        session = getattr(pipe, "label_session", None)
+        if session is not None:
+            if labeler is not None and labeler.error:
+                status_txt, color = f"음성 라벨 오류: {labeler.error[:40]}", RED
+            elif labeler is not None and labeler.listening:
+                status_txt, color = "음성 라벨 듣는 중", GREEN
+            else:
+                status_txt, color = "음성 라벨 준비 중", DIM
+            counts = " ".join(f"{k} {v}" for k, v in sorted(session.counts.items()) if v > 0) or "저장 없음"
+            heard = labeler.heard_log[-1][1] if labeler is not None and labeler.heard_log else "-"
+            d.text((WIN_W - 560, y + 30), f"{status_txt}   들은 말: {heard}", font=self.f_log, fill=color)
+            d.text((WIN_W - 560, y + 52), f"저장된 크롭: {counts}", font=self.f_log, fill=TEXT)
         ly = y + 28
         for ev in reversed(pipe.events.history[-5:]):
             ts = time.strftime("%H:%M:%S", time.localtime(ev.t))

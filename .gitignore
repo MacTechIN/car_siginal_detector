@@ -8,3 +8,8 @@ scratch/
 *.pt
 *.onnx
 *_openvino_model/
+recordings/
+runs/
+dataset/
+data/
+firmware/**/wifi_secrets.h
