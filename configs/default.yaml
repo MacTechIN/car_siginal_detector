@@ -1,0 +1,63 @@
+# car_siginal_detector settings. Override with: python -m csd --config my.yaml
+camera:
+  # ESP32-CAM running CameraWebServer (esp32_cam/firmware/camera_web_server)
+  base_url: http://192.168.45.138
+  stream_url: http://192.168.45.138:81/stream
+  apply_settings: true
+  # Sent to /control?var=..&val=.. at start-up. See research.md 5장 for the reasons.
+  settings:
+    framesize: XGA        # 1024x768: small traffic lights need pixels; lower (SVGA) for more fps
+    quality: 12           # JPEG 0-63, lower = better
+    vflip: 1              # match how the board is mounted
+    hmirror: 0
+    awb: 1
+    wb_mode: 1            # sunny: stable colours so red/yellow do not drift
+    aec: 1
+    ae_level: -1          # slightly darker: lit LED lamps keep their colour instead of white
+    agc: 1
+    gainceiling: 2
+    saturation: 1
+
+detector:
+  model: models/yolo26s.pt   # yolo26n.pt = faster, yolo26m.pt = more accurate but slower
+  imgsz: 640                 # 960-1280 helps far traffic lights at a CPU cost
+  conf: 0.25
+  device: cpu
+  tracker: configs/tracker.yaml
+
+traffic_light:
+  min_box_px: 6              # ignore heads smaller than this (short side)
+  smooth_window_s: 1.0
+  smooth_hold_s: 0.3
+
+vehicle_lights:
+  min_box_w_ratio: 0.12      # analyse lamps only on vehicles at least this wide (x frame width)
+
+plate:
+  enabled: true
+  model_dir: models/plates
+  every_s: 1.0               # OCR at most once per second on the lead vehicle
+  min_box_w_ratio: 0.18
+  min_votes: 2
+
+lanes:
+  horizon_ratio: 0.55        # image row (fraction of height) of the horizon/vanishing area
+  default_bottom_width: 0.9  # fallback ego-lane width at the bottom (fraction of width)
+  default_top_width: 0.12
+
+risk:
+  ttc_warn: 2.7              # s, pre-warning (Mobileye FCW "up to 2.7 s")
+  ttc_danger: 2.0            # s, urgent (NHTSA NCAP FCW test minimum 2.0-2.4 s)
+
+scene:
+  announce_every_s: 20       # spoken surroundings summary at most this often
+
+tts:
+  enabled: true
+  voice_hint: Korean         # SAPI voice description substring (Microsoft Heami)
+  rate: 1
+  cooldown_s: 8
+  max_age_s: 2.5
+
+log_dir: logs
+show: false                  # OpenCV window with overlays
