@@ -271,8 +271,10 @@ class Dashboard:
         y = BANNER_H + VIEW_H
         d.rectangle((0, y, WIN_W, WIN_H), fill=(14, 15, 18))
         d.text((16, y + 6), '이벤트 로그   id : [이름] : "상태"', font=self.f_small, fill=DIM)
-        status = f"{time.strftime('%H:%M:%S')}   {pipe.fps:4.1f} fps   자차 {EGO_KO.get(pipe.ego_state, pipe.ego_state)}"
-        d.text((WIN_W - 330, y + 6), status, font=self.f_small, fill=DIM)
+        link = getattr(pipe, "camera_link", "")
+        status = (f"카메라 {link}   " if link else "") + \
+            f"{time.strftime('%H:%M:%S')}   {pipe.fps:4.1f} fps   자차 {EGO_KO.get(pipe.ego_state, pipe.ego_state)}"
+        d.text((WIN_W - 16 - d.textlength(status, font=self.f_small), y + 6), status, font=self.f_small, fill=DIM)
         labeler = getattr(pipe, "labeler", None)
         session = getattr(pipe, "label_session", None)
         if session is not None:

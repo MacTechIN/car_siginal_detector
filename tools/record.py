@@ -34,6 +34,44 @@ from csd.recorder import Recorder  # noqa: E402
 from csd.stream import iter_mjpeg  # noqa: E402
 
 
+def record_usb(port: str, cam: dict, a) -> int:
+    """Record over the USB cable (csd/usb_camera.py); same folder layout as Wi-Fi recordings."""
+    from csd.usb_camera import UsbCamStream
+
+    out = Path(a.out)
+    out.mkdir(parents=True, exist_ok=True)
+    rec = Recorder.new_session(out, a.name, a.max_mb)
+    rec.meta.update({"source": f"usb:{port}", "camera_settings": None if a.no_settings else cam["settings"]})
+    stop = threading.Event()
+    signal.signal(signal.SIGINT, lambda *_: stop.set())
+    src = UsbCamStream(port, on_jpeg=rec.add).start()
+    if not a.no_settings:
+        src.apply_settings(cam["settings"])
+    print(f"recording USB {port} -> {rec.folder}  (Ctrl+C to stop)")
+    t_start, last_print, last_frames, reason = time.time(), time.time(), 0, "stopped by user"
+    try:
+        while not stop.wait(0.5):
+            now = time.time()
+            if rec.full:
+                reason = f"size limit {a.max_mb:.0f} MB reached"
+                break
+            if a.seconds and now - t_start >= a.seconds:
+                reason = f"{a.seconds:.0f} s elapsed"
+                break
+            if now - last_print >= 5:
+                fps = (rec.frames - last_frames) / (now - last_print)
+                print(f"  {now - t_start:6.0f}s  frames {rec.frames:6d}  {fps:4.1f} fps  "
+                      f"{rec.bytes / 1e6:7.1f} MB", flush=True)
+                last_print, last_frames = now, rec.frames
+    finally:
+        src.stop()
+        meta = rec.close(stop_reason=reason, camera_status=src.status)
+        print(f"saved {rec.frames} frames, {rec.duration:.1f} s, {rec.bytes / 1e6:.1f} MB, "
+              f"{meta['avg_fps']} fps -> {rec.folder}  ({reason})")
+        print(f"replay: python -m csd --source \"{rec.folder}\" --show")
+    return 0 if rec.frames else 1
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Record the ESP32-CAM MJPEG stream")
     ap.add_argument("--config", help="YAML overriding configs/default.yaml (camera URLs/settings)")
@@ -48,6 +86,14 @@ def main() -> int:
     cfg = cfgmod.load(a.config)
     cam = cfg["camera"]
     url, status = a.url, {}
+    if not url and cam.get("transport", "auto") in ("auto", "usb"):
+        from csd.usb_camera import find_usb_camera
+        port = find_usb_camera()
+        if port:
+            return record_usb(port, cam, a)
+        if cam.get("transport") == "usb":
+            print("USB camera not found (connect the board's native USB port)")
+            return 1
     if not url:
         base = find_camera(cam["base_url"])
         if not base:

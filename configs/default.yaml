@@ -4,6 +4,9 @@ camera:
   # Tried first; then the camera's own AP (192.168.4.1, Wi-Fi "CSD-CAM"), esp32cam.local,
   # and a scan of the laptop's subnet (see csd/discover.py). stream = <base>:81/stream
   base_url: http://192.168.45.138
+  # auto = USB cable first (board's native USB port; laptop Wi-Fi stays on the internet),
+  # then Wi-Fi. usb / wifi force one of them.
+  transport: auto
   auto_discover: true
   scan_subnet: true
   apply_settings: true

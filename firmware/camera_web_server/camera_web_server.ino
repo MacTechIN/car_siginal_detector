@@ -28,6 +28,7 @@ const char *password = WIFI_PASSWORD;
 #include <ESPmDNS.h>
 
 bool connectWiFi(const char *net, const char *pass);
+void startUsbStream();
 void startCameraServer();
 void setupLedFlash();
 
@@ -126,6 +127,11 @@ void setup() {
 #if defined(LED_GPIO_NUM)
   setupLedFlash();
 #endif
+
+  // Frames over the native USB port (usb_stream.cpp), available right away, even while
+  // Wi-Fi is still connecting.
+  startUsbStream();
+  Serial.println("USB camera stream ready on the native USB port");
 
   // Known networks first (home Wi-Fi, then an optional phone hotspot); if none is
   // reachable (e.g. in the car), start our own access point so a laptop can join it.

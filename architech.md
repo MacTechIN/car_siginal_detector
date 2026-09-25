@@ -30,7 +30,8 @@
 | 모니터 | OpenCV 창 + **Pillow**(맑은 고딕으로 한글 렌더링) | Pillow 12.3 | `--show`, `--fullscreen` |
 | 음성 라벨링 | **Vosk** `vosk-model-small-ko-0.22` (오프라인 한국어, 문장 목록 모드) + sounddevice | vosk 0.3.x | 방해 단어 + 정확 일치 규칙 |
 | 신호등 분류기 학습 | Ultralytics **YOLO26n-cls** 파인튜닝 (96×96 정사각 크롭) | | `tools/train_tl.py` → `models/tl_cls.pt` |
-| 카메라 연결 | 펌웨어: 알려진 Wi-Fi → 실패 시 AP `CSD-CAM`, mDNS `esp32cam` / PC: `discover.py` 자동 탐색 | | |
+| 카메라 연결 (기본) | **USB 케이블**: 펌웨어 `usb_stream.cpp`가 네이티브 USB(USB-Serial/JTAG)로 `CSDF`(JPEG)/`CSDJ`(상태) 패킷 전송. PC `usb_camera.py`(pyserial, 머리표 재동기화 파서) | pyserial 3.5 | XGA 27.7fps, 상한 약 650KB/s |
+| 카메라 연결 (예비) | 펌웨어: 알려진 Wi-Fi → 실패 시 AP `CSD-CAM`, mDNS `esp32cam` / PC: `discover.py` 자동 탐색 | | XGA 약 9fps |
 | 선택 가속 | OpenVINO 2026.4, onnxruntime 1.30 | | 배터리 모드에서는 이득 없음 (research.md 6장) |
 | 테스트 | pytest 9 | 48 tests | 합성 이미지·시계열 기반 |
 
@@ -64,7 +65,8 @@ car_siginal_detector/
 │  ├─ tts.py            SAPI 음성 우선순위 큐
 │  ├─ overlay.py        영상 위 박스, 궤적, 차선, 진행 방향
 │  ├─ dashboard.py      운전 상황 모니터 (자막, 상황판, 로그, 음성 라벨 상태)
-│  ├─ discover.py       카메라 자동 탐색 (설정 주소 → AP → mDNS → 서브넷)
+│  ├─ usb_camera.py     USB 케이블 카메라 수신 (패킷 파서, 설정 명령, 자동 재연결)
+│  ├─ discover.py       Wi-Fi 카메라 자동 탐색 (설정 주소 → AP → mDNS → 서브넷)
 │  ├─ recorder.py       녹화 세션 (원본 JPEG + timestamps.csv + meta.json)
 │  ├─ voice_label.py    마이크 → Vosk → 라벨 (자기 음성 차단)
 │  ├─ labeling.py       라벨 시점 전후 신호등 크롭 저장, 취소/맞아 처리

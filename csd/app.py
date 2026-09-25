@@ -89,6 +89,7 @@ class Pipeline:
         self.paths: dict[int, collections.deque] = {}
         self.last_dets: list[Detection] = []
         self.last_frame_w: int | None = None
+        self.camera_link = ""  # e.g. "USB COM7" / "Wi-Fi http://192.168.4.1", shown on the monitor
         # Latest risk event for the monitor: (time, kind, text)
         self.last_risk: tuple[float, str, str] | None = None
         self.ego_state = "unknown"
@@ -318,19 +319,30 @@ class Pipeline:
         self.events.close()
 
 
-def _wait_for_camera(cfg: dict, pipe: Pipeline, stop: dict, max_seconds: float | None) -> str | None:
-    """Find the camera, retrying (with a spoken hint) until found, stopped or timed out."""
+def _wait_for_camera(cfg: dict, pipe: Pipeline, stop: dict, max_seconds: float | None) -> tuple[str, str] | None:
+    """Find the camera, retrying (with a spoken hint) until found, stopped or timed out.
+
+    Returns ("usb", serial_port) or ("wifi", base_url). transport "auto" prefers the USB
+    cable (laptop Wi-Fi stays on the internet), then Wi-Fi.
+    """
     from .discover import find_camera
+    from .usb_camera import find_usb_camera
 
     cam = cfg["camera"]
+    transport = cam.get("transport", "auto")
     t0, tries = time.time(), 0
     while not stop["flag"] and not (max_seconds and time.time() - t0 > max_seconds):
-        base = find_camera(cam["base_url"], allow_scan=cam.get("scan_subnet", True))
-        if base:
-            return base
+        if transport in ("auto", "usb"):
+            port = find_usb_camera()
+            if port:
+                return "usb", port
+        if transport in ("auto", "wifi"):
+            base = find_camera(cam["base_url"], allow_scan=cam.get("scan_subnet", True))
+            if base:
+                return "wifi", base
         tries += 1
         log.warning("camera not found; retrying")
-        pipe.voice.say("카메라를 찾는 중입니다. 카메라 전원과 와이파이를 확인하세요", INFO, key="cam_missing",
+        pipe.voice.say("카메라를 찾는 중입니다. 카메라 USB 케이블을 확인하세요", INFO, key="cam_missing",
                        cooldown_s=20)
         time.sleep(3 if tries < 5 else 8)
     return None
@@ -351,20 +363,31 @@ def run(cfg: dict, source: str | None = None, max_seconds: float | None = None, 
         session_dir = cfgmod.resolve(source) if cfgmod.resolve(source).is_dir() else None
     else:
         from .discover import stream_url
-        base = _wait_for_camera(cfg, pipe, stop, max_seconds) if cam.get("auto_discover", True) else cam["base_url"]
-        if base is None:
+        found = (_wait_for_camera(cfg, pipe, stop, max_seconds) if cam.get("auto_discover", True)
+                 else ("wifi", cam["base_url"]))
+        if found is None:
             pipe.close()
             return pipe
-        cfg["camera"]["base_url"] = base
-        if cam.get("apply_settings"):
-            status = apply_settings(base, cam["settings"])
-            log.info("camera %s: framesize=%s quality=%s", base, status.get("framesize"), status.get("quality"))
+        kind, where = found
         if record or label_voice:
             from .recorder import Recorder
             recorder = Recorder.new_session(cfgmod.resolve(cfg.get("record_dir", "recordings")), name)
-            recorder.meta.update({"url": stream_url(base), "camera_settings": cam["settings"]})
+            recorder.meta.update({"source": f"{kind}:{where}", "camera_settings": cam["settings"]})
             log.info("recording to %s", recorder.folder)
-        src = MjpegStream(stream_url(base), on_jpeg=recorder.add if recorder else None).start()
+        on_jpeg = recorder.add if recorder else None
+        if kind == "usb":
+            from .usb_camera import UsbCamStream
+            src = UsbCamStream(where, on_jpeg=on_jpeg).start()
+            if cam.get("apply_settings"):
+                src.apply_settings(cam["settings"])
+            log.info("camera: USB %s", where)
+        else:
+            cfg["camera"]["base_url"] = where
+            if cam.get("apply_settings"):
+                status = apply_settings(where, cam["settings"])
+                log.info("camera %s: framesize=%s quality=%s", where, status.get("framesize"), status.get("quality"))
+            src = MjpegStream(stream_url(where), on_jpeg=on_jpeg).start()
+        pipe.camera_link = f"{'USB' if kind == 'usb' else 'Wi-Fi'} {where}"
         session_dir = recorder.folder if recorder else None
 
     if label_voice:

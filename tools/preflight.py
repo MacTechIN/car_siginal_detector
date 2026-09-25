@@ -131,15 +131,38 @@ def check_internet():
     return WARN, f"인터넷: 없음. 앱은 오프라인으로 동작합니다 ({where}{wifi}){hint}"
 
 
+def check_usb_camera():
+    from csd.usb_camera import UsbCamStream, find_usb_camera, list_candidate_ports
+
+    port = find_usb_camera()
+    if not port:
+        n = len(list_candidate_ports())
+        hint = " (포트는 있으나 응답 없음: 카메라 펌웨어 확인)" if n else ""
+        return None, f"USB 카메라 없음{hint}"
+    frames, sizes = [], []
+    src = UsbCamStream(port, on_jpeg=lambda t, jpg: (frames.append(t), sizes.append(len(jpg)))).start()
+    time.sleep(4.0)
+    src.stop()
+    recent = [t for t in frames if t >= frames[-1] - 3.0] if frames else []
+    fps = (len(recent) - 1) / (recent[-1] - recent[0]) if len(recent) > 1 else 0.0
+    level = OK if fps >= 3 else WARN
+    return level, (f"카메라: USB {port}  {fps:.1f} fps, 프레임 평균 {sum(sizes) / max(len(sizes), 1) / 1000:.0f} KB"
+                   " (노트북 Wi-Fi는 인터넷용으로 그대로 사용)")
+
+
 def check_camera(cfg):
     from csd.discover import find_camera, stream_url
     from csd.stream import iter_mjpeg
     import threading
 
+    if cfg["camera"].get("transport", "auto") in ("auto", "usb"):
+        level, msg = check_usb_camera()
+        if level is not None or cfg["camera"].get("transport") == "usb":
+            return level or FAIL, (msg if level else f"{msg}. 보드의 네이티브 USB 포트에 케이블을 연결하세요"), None
     base = find_camera(cfg["camera"]["base_url"], allow_scan=cfg["camera"].get("scan_subnet", True))
     if not base:
-        return FAIL, ("카메라를 찾지 못함. 카메라 전원 확인 -> 1분 기다린 뒤 노트북 Wi-Fi를 'CSD-CAM' "
-                      "(비밀번호 csdcam1234)에 연결하고 다시 실행"), None
+        return FAIL, ("카메라를 찾지 못함. USB 케이블을 보드의 네이티브 USB 포트에 연결하거나, "
+                      "노트북 Wi-Fi를 'CSD-CAM'(비밀번호 csdcam1234)에 연결하고 다시 실행"), None
     stop = threading.Event()
     n, t0, size = 0, time.time(), 0
     try:
