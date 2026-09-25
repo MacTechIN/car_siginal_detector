@@ -87,6 +87,50 @@ def check_mic(cfg, seconds: float = 1.5):
         return WARN, f"마이크 사용 불가 (음성 라벨링 불가): {e}"
 
 
+def _wifi_ssid() -> str | None:
+    import subprocess
+    try:
+        out = subprocess.run(["netsh", "wlan", "show", "interfaces"], capture_output=True, timeout=5).stdout
+        for line in out.decode("utf-8", "replace").splitlines():
+            key, _, val = line.partition(":")
+            if key.strip() == "SSID":
+                return val.strip()
+    except Exception:
+        pass
+    return None
+
+
+def _default_route() -> str | None:
+    """Adapter Windows sends internet traffic to (lowest route + interface metric)."""
+    import subprocess
+    ps = ("Get-NetRoute -DestinationPrefix 0.0.0.0/0 -ErrorAction SilentlyContinue | ForEach-Object { "
+          "$i = Get-NetIPInterface -InterfaceIndex $_.ifIndex -AddressFamily IPv4; "
+          "[pscustomobject]@{A=$_.InterfaceAlias; M=$_.RouteMetric + $i.InterfaceMetric} } | "
+          "Sort-Object M | Select-Object -First 1 -ExpandProperty A")
+    try:
+        out = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, timeout=15).stdout
+        return out.decode("utf-8", "replace").strip() or None
+    except Exception:
+        return None
+
+
+def check_internet():
+    """Internet is optional (the app runs offline) but wanted for the phone-USB-tethering setup:
+    Wi-Fi on the camera's CSD-CAM, internet over the phone's USB cable."""
+    import requests
+    ssid, route = _wifi_ssid(), _default_route()
+    try:
+        ok = requests.get("http://www.msftconnecttest.com/connecttest.txt", timeout=4).text.startswith("Microsoft")
+    except Exception:
+        ok = False
+    where = f"경로: {route}" if route else "경로 확인 불가"
+    wifi = f", Wi-Fi: {ssid}" if ssid else ""
+    if ok:
+        return OK, f"인터넷: 연결됨 ({where}{wifi})"
+    hint = " -> DEMO.md 2-1 (Wi-Fi 메트릭 조정)" if ssid == "CSD-CAM" else " (휴대폰 USB 테더링 확인)"
+    return WARN, f"인터넷: 없음. 앱은 오프라인으로 동작합니다 ({where}{wifi}){hint}"
+
+
 def check_camera(cfg):
     from csd.discover import find_camera, stream_url
     from csd.stream import iter_mjpeg
@@ -118,7 +162,7 @@ def main() -> int:
     a = ap.parse_args()
     cfg = cfgmod.load(a.config)
 
-    results = [check_power(), check_disk(), check_models(cfg), check_voice(cfg), check_mic(cfg)]
+    results = [check_power(), check_disk(), check_models(cfg), check_voice(cfg), check_mic(cfg), check_internet()]
     cam_level, cam_msg, _ = check_camera(cfg)
     results.append((cam_level, cam_msg))
 
