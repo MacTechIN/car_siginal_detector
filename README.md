@@ -19,7 +19,8 @@ python -m venv .venv
 
 | 문서 | 내용 |
 |---|---|
-| [CHANGELOG.md](CHANGELOG.md) | 버전 기록 (v0.1 ~ v0.3) |
+| [CHANGELOG.md](CHANGELOG.md) | 버전 기록 (v0.1 ~ v0.4) |
+| [windows_app/README.md](windows_app/README.md) | **네이티브 Windows 앱** (`CarSignalDetector.exe`) 빌드·실행 |
 | [HANDOVER.md](HANDOVER.md) | **인수인계서**: 현재 상태, 실행 방법, 환경 특이사항, 알려진 문제, 다음 할 일 |
 | [DEMO.md](DEMO.md) | **차량 시연 절차**: `demo.bat`, 카메라 자체 Wi-Fi 연결, 음성 라벨링, `train.bat` |
 | [app_spec.md](app_spec.md) | 앱 기능 명세 |

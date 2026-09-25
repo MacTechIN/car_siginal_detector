@@ -33,6 +33,7 @@ ESP32-S3 카메라(OV3660)의 MJPEG 영상을 PC가 받아서 다음을 인식�
 |---|---|
 | 단위·통합 테스트 | **79개 모두 통과** (`pytest -q`, 약 15초. 음성 통합 테스트 포함) |
 | 실제 카메라 연동 | ✅ 스트림 수신, 카메라 설정 적용, 검출, 로그, 음성(Heami), 모니터 스냅샷 확인 |
+| v0.4 (2026-09-25) | **네이티브 Windows 앱** `windows_app/` (C# WPF .NET 8, `CarSignalDetector.exe` 약 200KB). 엔진은 `python -m csd --serve`로 창 없이 실행하고, 앱이 `/state`·`/frame.jpg`로 표시하며 시작·정지와 옵션을 제어. `windows_app/README.md` |
 | v0.3 (2026-09-25) | **카메라 영상을 USB 케이블로 전송**. 펌웨어 `usb_stream.cpp` + `csd/usb_camera.py`. XGA 27.7fps (Wi-Fi 9.2fps). 노트북 Wi-Fi는 인터넷용으로 유지. `transport: auto`는 USB를 먼저 찾고 없으면 Wi-Fi. 점검·녹화 도구도 USB 지원 |
 | v0.2 추가 기능 | 녹화·재생(`tools/record.py`, `--record`, `--source`), 카메라 자동 탐색, 카메라 자체 Wi-Fi(AP) 펌웨어, **음성 라벨링**(`--label-voice`), 신호등 분류기 학습(`train.bat`), 출발 전 점검(`tools/preflight.py`), 시연 실행 파일(`demo.bat`) |
 | 음성 라벨 인식 | 합성 음성 평가에서 라벨 21/21 정확, 일반 대화 15문장 중 오인 0 (`tools/eval_voice_labels.py`). **실제 사람 목소리·차량 소음에서는 미검증** |
@@ -59,7 +60,11 @@ python -m venv .venv
 ### 4.2 실행
 
 ```powershell
-# 차량 시연: 점검 → 전체 화면 모니터 + 음성 + 녹화 + 음성 라벨링 (DEMO.md)
+# 네이티브 Windows 앱 (권장 화면): 빌드 후 exe 실행 → ▶ 시작
+windows_app\build.bat
+windows_app\publish\CarSignalDetector.exe            # --autostart 로 바로 시작
+
+# 차량 시연: 점검 → 전체 화면 모니터(OpenCV) + 음성 + 녹화 + 음성 라벨링 (DEMO.md)
 demo.bat
 
 # 출발 전 점검만

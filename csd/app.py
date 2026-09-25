@@ -350,12 +350,31 @@ def _wait_for_camera(cfg: dict, pipe: Pipeline, stop: dict, max_seconds: float |
 
 def run(cfg: dict, source: str | None = None, max_seconds: float | None = None, speak: bool = True,
         show: bool | None = None, snapshot: str | None = None, realtime: bool = False,
-        record: bool = False, label_voice: bool = False, name: str = "", fullscreen: bool = False) -> Pipeline:
+        record: bool = False, label_voice: bool = False, name: str = "", fullscreen: bool = False,
+        serve: str | None = None) -> Pipeline:
     show = cfg.get("show", False) if show is None else show
     cam = cfg["camera"]
-    pipe = Pipeline(cfg, speak=speak)
     stop = {"flag": False}
     signal.signal(signal.SIGINT, lambda *_: stop.update(flag=True))
+
+    # Windows app mode: local HTTP server, no OpenCV window. Started first so the app can
+    # show "searching for camera" while the models load and the camera is being found.
+    server = None
+    if serve:
+        import threading
+        from .server import EngineServer
+        host, _, port = serve.rpartition(":")
+        server = EngineServer(host or "127.0.0.1", int(port)).start()
+        server.set_status(phase="loading", phase_text="모델을 불러오는 중")
+
+        def watch_shutdown():
+            server.shutdown_requested.wait()
+            stop["flag"] = True
+        threading.Thread(target=watch_shutdown, daemon=True).start()
+
+    pipe = Pipeline(cfg, speak=speak)
+    if server:
+        server.set_status(phase="camera", phase_text="카메라를 찾는 중")
 
     recorder = None
     if source:
@@ -367,6 +386,8 @@ def run(cfg: dict, source: str | None = None, max_seconds: float | None = None, 
                  else ("wifi", cam["base_url"]))
         if found is None:
             pipe.close()
+            if server is not None:
+                server.stop()
             return pipe
         kind, where = found
         if record or label_voice:
@@ -429,6 +450,8 @@ def run(cfg: dict, source: str | None = None, max_seconds: float | None = None, 
             dets = pipe.process(frame, t)
             n += 1
             pipe.fps = 0.9 * pipe.fps + 0.1 / max(time.time() - t0, 1e-3) if n > 1 else 1 / max(time.time() - t0, 1e-3)
+            if server is not None:
+                server.publish(frame, dets, pipe)
             if dashboard is not None:
                 screen = dashboard.render(frame, dets, pipe)
             if show:
@@ -448,6 +471,8 @@ def run(cfg: dict, source: str | None = None, max_seconds: float | None = None, 
         if pipe.label_session is not None:
             log.info("voice labels this session: %s", dict(pipe.label_session.counts) or "none")
         pipe.close()
+        if server is not None:
+            server.stop()
         if show:
             cv2.destroyAllWindows()
         log.info("processed %d frames in %.1fs", n, time.time() - t_start)
@@ -463,6 +488,8 @@ def main(argv=None) -> None:
     ap.add_argument("--show", action="store_true", help="open the driving-situation monitor window (q/Esc to quit)")
     ap.add_argument("--snapshot", help="save the last monitor screen to this PNG path on exit")
     ap.add_argument("--fullscreen", action="store_true", help="with --show: full-screen monitor window")
+    ap.add_argument("--serve", metavar="[HOST:]PORT",
+                    help="engine mode for the Windows app: serve /frame.jpg and /state on 127.0.0.1")
     ap.add_argument("--no-voice", action="store_true", help="disable voice alerts")
     ap.add_argument("--record", action="store_true", help="save the camera stream to recordings/<time>")
     ap.add_argument("--label-voice", action="store_true",
@@ -475,4 +502,5 @@ def main(argv=None) -> None:
                         format="%(asctime)s %(levelname).1s %(name)s: %(message)s", datefmt="%H:%M:%S")
     cfg = cfgmod.load(a.config)
     run(cfg, a.source, a.seconds, speak=not a.no_voice, show=a.show or None, snapshot=a.snapshot,
-        realtime=a.realtime, record=a.record, label_voice=a.label_voice, name=a.name, fullscreen=a.fullscreen)
+        realtime=a.realtime, record=a.record, label_voice=a.label_voice, name=a.name, fullscreen=a.fullscreen,
+        serve=a.serve)

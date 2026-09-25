@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>CarSignalDetector</AssemblyName>
+    <RootNamespace>CsdApp</RootNamespace>
+    <Version>0.4.0</Version>
+    <Product>car_siginal_detector</Product>
+    <Description>운전 상황 모니터 (ESP32-S3 카메라 신호등·차량 상태 인식)</Description>
+    <SatelliteResourceLanguages>ko</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+</Project>

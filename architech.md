@@ -28,6 +28,7 @@
 | 번호판 | sauce-hug/korean-license-plate-detector YOLO 3종 | HF `best.pt` | 백그라운드 스레드에서 실행 |
 | 음성 | Windows **SAPI5** (pywin32 312), 음성 **Microsoft Heami** | | 오프라인 |
 | 모니터 | OpenCV 창 + **Pillow**(맑은 고딕으로 한글 렌더링) | Pillow 12.3 | `--show`, `--fullscreen` |
+| **네이티브 앱** | **C# WPF .NET 8** (`windows_app/`), 엔진과 127.0.0.1 HTTP(`csd/server.py`: `/state`, `/frame.jpg`, `/shutdown`)로 통신 | .NET SDK 8.0.425, 데스크톱 런타임 8.0.31 | 단일 exe 약 200KB, `--autostart` |
 | 음성 라벨링 | **Vosk** `vosk-model-small-ko-0.22` (오프라인 한국어, 문장 목록 모드) + sounddevice | vosk 0.3.x | 방해 단어 + 정확 일치 규칙 |
 | 신호등 분류기 학습 | Ultralytics **YOLO26n-cls** 파인튜닝 (96×96 정사각 크롭) | | `tools/train_tl.py` → `models/tl_cls.pt` |
 | 카메라 연결 (기본) | **USB 케이블**: 펌웨어 `usb_stream.cpp`가 네이티브 USB(USB-Serial/JTAG)로 `CSDF`(JPEG)/`CSDJ`(상태) 패킷 전송. PC `usb_camera.py`(pyserial, 머리표 재동기화 파서) | pyserial 3.5 | XGA 27.7fps, 상한 약 650KB/s |
@@ -65,6 +66,7 @@ car_siginal_detector/
 │  ├─ tts.py            SAPI 음성 우선순위 큐
 │  ├─ overlay.py        영상 위 박스, 궤적, 차선, 진행 방향
 │  ├─ dashboard.py      운전 상황 모니터 (자막, 상황판, 로그, 음성 라벨 상태)
+│  ├─ server.py         Windows 앱용 로컬 HTTP (상태 JSON, 주석 영상, 정상 종료)
 │  ├─ usb_camera.py     USB 케이블 카메라 수신 (패킷 파서, 설정 명령, 자동 재연결)
 │  ├─ discover.py       Wi-Fi 카메라 자동 탐색 (설정 주소 → AP → mDNS → 서브넷)
 │  ├─ recorder.py       녹화 세션 (원본 JPEG + timestamps.csv + meta.json)
@@ -79,6 +81,8 @@ car_siginal_detector/
 │  ├─ build_tl_dataset.py  크롭 → dataset/tl_cls/{train,val} (라벨 이벤트 단위 분할)
 │  ├─ train_tl.py       분류기 학습 → models/tl_cls.pt
 │  └─ eval_voice_labels.py 합성 음성으로 음성 라벨 인식률 평가
+├─ windows_app/         네이티브 Windows 앱 (C# WPF): CsdApp/, build.bat, make_shortcut.bat
+├─ firmware/            카메라 펌웨어 (USB 영상 + Wi-Fi 예비)
 ├─ demo.bat  train.bat  시연 / 학습 실행 파일
 └─ models/  logs/  recordings/  dataset/  data/  runs/  scratch/   (git 제외)
 ```

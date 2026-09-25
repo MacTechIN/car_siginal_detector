@@ -79,6 +79,25 @@ def lamps_ko(label: str | None) -> str:
     return " · ".join(parts)
 
 
+def describe(det, ts) -> tuple[str, str]:
+    """(Korean state text, plate) for one tracked object; shared with the WPF app's state JSON."""
+    if ts is None:
+        return "-", ""
+    if det.name == "traffic_light":
+        return LIGHT_KO.get(ts.light.confirmed, "판단 중") if ts.light.confirmed else "판단 중", ""
+    if det.name == "person":
+        return "보행자 감지", ""
+    parts = []
+    if ts.motion_smoother.confirmed:
+        parts.append(MOTION_KO.get(ts.motion_smoother.confirmed, ts.motion_smoother.confirmed))
+    lamps = lamps_ko(ts.lamp_smoother.confirmed)
+    if lamps:
+        parts.append(lamps)
+    if ts.collision != "none":
+        parts.append("충돌 " + {"danger": "위험", "warning": "주의"}[ts.collision])
+    return (" · ".join(parts) or "추적 중"), (ts.plate or "")
+
+
 class Dashboard:
     def __init__(self):
         self.f_caption = _font(46, bold=True)
@@ -219,7 +238,7 @@ class Dashboard:
             if ry > BANNER_H + VIEW_H - 30:
                 break
             ts = pipe.tracks.get(det.tid)
-            state, plate = self._describe(det, ts)
+            state, plate = describe(det, ts)
             fill = BLUE if det.tid == pipe.lead_id else TEXT
             d.text((cols[0], ry), str(det.tid), font=self.f, fill=fill)
             d.text((cols[1], ry), NAME_KO.get(det.name, det.name), font=self.f, fill=fill)
@@ -229,23 +248,6 @@ class Dashboard:
             d.text((cols[2], ry), state, font=self.f, fill=fill)
             d.text((cols[3], ry), plate, font=self.f, fill=fill)
             ry += 24
-
-    def _describe(self, det, ts) -> tuple[str, str]:
-        if ts is None:
-            return "-", ""
-        if det.name == "traffic_light":
-            return LIGHT_KO.get(ts.light.confirmed, "판단 중") if ts.light.confirmed else "판단 중", ""
-        if det.name == "person":
-            return "보행자 감지", ""
-        parts = []
-        if ts.motion_smoother.confirmed:
-            parts.append(MOTION_KO.get(ts.motion_smoother.confirmed, ts.motion_smoother.confirmed))
-        lamps = lamps_ko(ts.lamp_smoother.confirmed)
-        if lamps:
-            parts.append(lamps)
-        if ts.collision != "none":
-            parts.append("충돌 " + {"danger": "위험", "warning": "주의"}[ts.collision])
-        return (" · ".join(parts) or "추적 중"), (ts.plate or "")
 
     def _lane_diagram(self, d, pipe, x: int, y: int) -> None:
         """Top-down sketch: our lane's two lines and where our car sits between them."""
