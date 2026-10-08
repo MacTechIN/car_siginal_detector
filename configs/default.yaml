@@ -12,8 +12,8 @@ camera:
   apply_settings: true
   # Sent to /control?var=..&val=.. at start-up. See research.md 5장 for the reasons.
   settings:
-    framesize: UXGA       # 1600x1200, the firmware's largest frame buffer (USB ~11 fps). XGA = more fps
-    quality: 10           # JPEG 0-63, lower = better (sharper; ~650 KB/s USB limit)
+    framesize: XGA        # 1024x768. UXGA (1600x1200) crashed the camera on 2026-10-08 (q10): test before using
+    quality: 12           # JPEG 0-63, lower = better (USB link tops out at ~650 KB/s)
     vflip: 1              # match how the board is mounted
     hmirror: 0
     awb: 1

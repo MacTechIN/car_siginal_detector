@@ -293,3 +293,10 @@
   - GPS 속도가 있으면 자차 정지/주행을 GPS로 판단합니다.
 - 검증: 테스트 122개 모두 통과. 녹화 영상 + 가상 NMEA 주행(80km/h, 제한 60 카메라)으로 엔진을 돌려 `gps fix` → `speeding` → `speed_camera ahead 489m` 이벤트를 확인했습니다.
 - **아직 안 한 것:** 실제 휴대폰 앱 연결, 실제 카메라 데이터 파일·API 키 확인, 도로 주행.
+
+## 17. UXGA 설정 뒤 카메라 재부팅 반복 (2026-10-08 16:00~)
+
+- 앱 실행 시 UXGA·품질 10에서 프레임이 약 79KB, 7fps로 USB 한계(약 650KB/s)에 가까웠고, 9초 동안 USB 재연결 4회 뒤 엔진이 멈췄습니다.
+- 네이티브 USB 포트 로그: 스트리밍 시작 직후 `Guru Meditation Error: Core 0 panic'ed (Cache error) / Cache disabled but cached memory region accessed`.
+- 이후에는 명령을 보내지 않아도 부트로더 진입 직후 `rst:0x3 (RTC_SW_SYS_RST)`로 약 1초마다 재부팅을 반복했습니다. PC에서는 복구할 수 없어 전원 재연결이 필요합니다.
+- 기본 설정을 검증된 XGA·품질 12로 되돌렸습니다. UXGA는 카메라 복구 뒤 시험하고 나서 쓰기로 했습니다.
