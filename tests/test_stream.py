@@ -71,3 +71,12 @@ def test_realtime_replay_skips_late_frames(tmp_path):
         n += 1
         time.sleep(0.1)  # a slow detector: ~10 fps
     assert n < 12
+
+
+def test_recorder_logs_stream_gaps(tmp_path):
+    from csd.recorder import Recorder
+    rec = Recorder(tmp_path / "s")
+    for t in (0.0, 0.1, 0.2, 30.5, 30.6):  # 30 s interruption after frame 2
+        rec.add(t, b"\xff\xd8x\xff\xd9")
+    meta = rec.close()
+    assert meta["gaps"] == [{"after_frame": 2, "t_unix": 0.2, "seconds": 30.3}]

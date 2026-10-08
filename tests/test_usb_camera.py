@@ -42,3 +42,23 @@ def test_rejects_absurd_length():
     stream = b"CSDF" + struct.pack("<II", 50_000_000, 0) + packet(b"CSDF", jpeg(1))
     out = PacketParser().feed(stream)
     assert len(out) == 1 and out[0][2] == jpeg(1)
+
+
+def test_settings_resent_after_camera_falls_back_to_qvga():
+    from csd.usb_camera import SettingsKeeper
+    k = SettingsKeeper(mismatch_frames=10, min_interval_s=5.0)
+    k.set({"framesize": "XGA", "quality": 12})
+    k.applied(0.0)
+    assert not any(k.frame(1024, 1 + i * 0.05) for i in range(50))   # right size
+    fired = [k.frame(320, 10 + i * 0.05) for i in range(10)]          # camera rebooted (QVGA)
+    assert fired[-1] and not any(fired[:-1])
+    k.applied(10.5)
+    assert not k.frame(320, 11.0)                                      # rate-limited
+
+
+def test_no_resend_without_known_framesize():
+    from csd.usb_camera import SettingsKeeper
+    k = SettingsKeeper(mismatch_frames=1)
+    assert not k.frame(320, 100.0)  # nothing configured
+    k.set({"framesize": 12})        # numeric value: width unknown, no guessing
+    assert not k.frame(320, 100.0)

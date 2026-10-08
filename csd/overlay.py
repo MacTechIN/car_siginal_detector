@@ -50,6 +50,10 @@ def draw(frame: np.ndarray, dets, pipe) -> np.ndarray:
                 thick = 1 + 3 * i // len(pts)
                 cv2.line(img, tuple(pts[i - 1]), tuple(pts[i]), c, thick, cv2.LINE_AA)
 
+    # Small id tags, sized to the frame width so they look the same at XGA and UXGA once the
+    # view is scaled to the monitor.
+    font = 0.38 * W / 1024
+    pad = max(2, int(3 * W / 1024))
     for d in dets:
         x1, y1, x2, y2 = (int(v) for v in d.box)
         c = _color(d, pipe)
@@ -57,7 +61,7 @@ def draw(frame: np.ndarray, dets, pipe) -> np.ndarray:
         label = f"{d.tid}" if d.tid >= 0 else "?"
         if d.tid == pipe.lead_id:
             label += " LEAD"
-        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 2)
-        cv2.rectangle(img, (x1, max(0, y1 - th - 8)), (x1 + tw + 8, y1), c, -1)
-        cv2.putText(img, label, (x1 + 4, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 0, 0), 2, cv2.LINE_AA)
+        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, font, 1)
+        cv2.rectangle(img, (x1, max(0, y1 - th - 2 * pad)), (x1 + tw + 2 * pad, y1), c, -1)
+        cv2.putText(img, label, (x1 + pad, y1 - pad), cv2.FONT_HERSHEY_SIMPLEX, font, (0, 0, 0), 1, cv2.LINE_AA)
     return img

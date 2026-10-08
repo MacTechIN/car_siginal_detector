@@ -9,6 +9,11 @@ The crop is split into equal lamp cells along the long axis. A cell counts as li
 its bright, saturated pixels exceed a share of the cell; the hue of those pixels is used
 as a cross-check against the cell position. Flashing (yellow or red blinking at ~1 Hz)
 is detected over time per track by `FlashTracker`.
+
+The detector often boxes only the lit lamp of a far or night-time head (a near-square
+crop). Splitting that into lamp cells puts the over-exposed centre in the middle cell and
+reads a red lamp as yellow (2026-10-06 road recordings), so near-square crops are read by
+hue alone. Lamp combinations a Korean vehicle signal never shows are reported as unknown.
 """
 
 from __future__ import annotations
@@ -29,8 +34,8 @@ _HUE_RANGES = {
 
 @dataclass
 class LightReading:
-    state: str            # red, yellow, green, left, red_left, green_left, red_yellow, off, unknown
-    lamps: int            # 3 or 4 (0 when unknown)
+    state: str            # red, yellow, green, left, red_left, green_left, off, unknown
+    lamps: int            # 3 or 4, 1 for a single-lamp crop (0 when unknown)
     orientation: str      # horizontal / vertical
     lit: tuple[str, ...]  # lit lamp roles in order
     confidence: float
@@ -55,8 +60,32 @@ def _estimate_lamp_count(long_px: int, short_px: int) -> int:
     return 4 if ratio >= 3.4 else 3
 
 
+# A head has 3-4 lamps in a row (long/short side ratio >= ~2.4 in practice); below this the
+# crop is taken to be one lamp.
+SINGLE_LAMP_RATIO = 2.0
+# Korean vehicle signals: one lamp, or the arrow together with red or green.
+VALID_STATES = {"off", "red", "yellow", "green", "left", "red_left", "green_left"}
+
+
+def _single_lamp(hsv: np.ndarray, orientation: str, s_min: int, min_colored: float = 0.03,
+                 min_purity: float = 0.7) -> LightReading:
+    """One lit lamp: its colour from the saturated halo around the (often white) centre."""
+    colored = (hsv[..., 1] >= s_min) & (hsv[..., 2] >= 110)
+    share = float(colored.mean())
+    if share < min_colored:
+        return LightReading("unknown", 1, orientation, (), 0.0)
+    h = hsv[..., 0][colored]
+    counts = {name: sum(int(((h >= lo) & (h <= hi)).sum()) for lo, hi in ranges)
+              for name, ranges in _HUE_RANGES.items()}
+    best = max(counts, key=counts.get)
+    purity = counts[best] / max(1, h.size)
+    if purity < min_purity:
+        return LightReading("unknown", 1, orientation, (), 0.0)
+    return LightReading(best, 1, orientation, (best,), min(1.0, share / 0.1) * purity)
+
+
 def classify_light(crop: np.ndarray, lit_share: float = 0.08, v_min: int = 170, s_min: int = 70) -> LightReading:
-    """Classify a BGR crop of one traffic-light head."""
+    """Classify a BGR crop of one traffic-light head (or of one lit lamp)."""
     if crop is None or crop.size == 0 or min(crop.shape[:2]) < 4:
         return LightReading("unknown", 0, "horizontal", (), 0.0)
 
@@ -64,6 +93,8 @@ def classify_light(crop: np.ndarray, lit_share: float = 0.08, v_min: int = 170, 
     horizontal = w >= h
     orientation = "horizontal" if horizontal else "vertical"
     long_px, short_px = (w, h) if horizontal else (h, w)
+    if long_px / max(short_px, 1) < SINGLE_LAMP_RATIO:
+        return _single_lamp(cv2.cvtColor(crop, cv2.COLOR_BGR2HSV), orientation, s_min)
     n = _estimate_lamp_count(long_px, short_px)
     roles = _lamp_roles(n)
 
@@ -95,9 +126,11 @@ def classify_light(crop: np.ndarray, lit_share: float = 0.08, v_min: int = 170, 
     if state == "off":
         # No lamp is bright enough: fall back to the dominant hue of the whole head so a
         # dim or over-exposed light still yields a colour (lower confidence).
-        hue = _hue_class(hsv[..., 0][hsv[..., 2] >= int(v_min * 0.75)])
+        hue = _hue_class(hsv[..., 0][(hsv[..., 2] >= int(v_min * 0.75)) & (hsv[..., 1] >= s_min)])
         if hue is not None:
             state, conf = hue, 0.3
+    if state not in VALID_STATES:
+        return LightReading("unknown", n, orientation, tuple(lit_roles), 0.0)
     return LightReading(state, n, orientation, tuple(lit_roles), conf)
 
 
@@ -120,6 +153,28 @@ def _combine(lit: list[str]) -> str:
     if s == {"red", "yellow"}:
         return "red_yellow"
     return "+".join(sorted(s))
+
+
+def lane_control_row(boxes: dict[int, tuple], min_count: int = 3) -> set[int]:
+    """Track ids of square lamps standing in one row at the same height and size.
+
+    Highway and tunnel lane-control signals (green down-arrow / red X, one per lane on a
+    gantry) are detected as "traffic light" and were announced as green lights. Vehicle
+    signal heads are wide (3-4 lamps), so a row of >= 3 near-square, equal-size lamps is
+    taken to be lane-control signals.
+    """
+    sq = {tid: b for tid, b in boxes.items()
+          if (b[2] - b[0]) > 0 and (b[3] - b[1]) > 0
+          and max(b[2] - b[0], b[3] - b[1]) / min(b[2] - b[0], b[3] - b[1]) < SINGLE_LAMP_RATIO}
+    best: set[int] = set()
+    for tid, b in sq.items():
+        h = b[3] - b[1]
+        cy = (b[1] + b[3]) / 2
+        row = {o for o, c in sq.items()
+               if abs((c[1] + c[3]) / 2 - cy) <= 0.6 * h and 0.6 <= (c[3] - c[1]) / h <= 1.6}
+        if len(row) > len(best):
+            best = row
+    return best if len(best) >= min_count else set()
 
 
 class FlashTracker:

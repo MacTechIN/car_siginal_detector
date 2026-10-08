@@ -12,8 +12,8 @@ camera:
   apply_settings: true
   # Sent to /control?var=..&val=.. at start-up. See research.md 5장 for the reasons.
   settings:
-    framesize: XGA        # 1024x768: small traffic lights need pixels; lower (SVGA) for more fps
-    quality: 12           # JPEG 0-63, lower = better
+    framesize: UXGA       # 1600x1200, the firmware's largest frame buffer (USB ~11 fps). XGA = more fps
+    quality: 10           # JPEG 0-63, lower = better (sharper; ~650 KB/s USB limit)
     vflip: 1              # match how the board is mounted
     hmirror: 0
     awb: 1

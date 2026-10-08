@@ -18,6 +18,16 @@ from .lanes import polygon_x_range
 VEHICLE_CLASSES = {"car", "truck", "bus", "motorcycle"}
 
 
+def is_own_hood(box, frame_w: int, frame_h: int) -> bool:
+    """True for a "vehicle" box that is our own bonnet: touching the bottom edge and nearly
+    full width. With the camera behind the windscreen the bonnet fills the bottom ~25% of
+    the frame and the detector reports it as a car (26 of 27 times it became the lead
+    vehicle in the 2026-10-06 recordings). A real vehicle ends at the bonnet line, above
+    the bottom edge."""
+    x1, y1, x2, y2 = box
+    return y2 >= frame_h * 0.97 and (x2 - x1) >= frame_w * 0.8
+
+
 @dataclass
 class Kinematics:
     samples: collections.deque = field(default_factory=lambda: collections.deque(maxlen=90))
@@ -64,10 +74,16 @@ def lane_offset(box, polygon, frame_h: int) -> float:
 class RiskAnalyzer:
     def __init__(self, ttc_warn: float = 2.7, ttc_danger: float = 2.0, min_box_w_ratio: float = 0.06,
                  lead_offset: float = 0.8, cut_in_outside: float = 1.15, cut_in_inside: float = 0.75,
-                 cut_in_outside_s: float = 0.5, cut_in_cooldown_s: float = 6.0):
+                 cut_in_outside_s: float = 0.5, cut_in_cooldown_s: float = 6.0,
+                 no_lane_collision_w_ratio: float = 0.10, no_lane_cut_in_w_ratio: float = 0.15):
         self.ttc_warn = ttc_warn
         self.ttc_danger = ttc_danger
         self.min_box_w_ratio = min_box_w_ratio
+        # Without detected lane lines the ego lane is a fixed straight polygon, which on curves
+        # puts cars of the next lane "in our lane". Only near (wide) vehicles are judged then:
+        # near the bottom of the frame the fixed polygon is still close to the real lane.
+        self.no_lane_collision_w_ratio = no_lane_collision_w_ratio
+        self.no_lane_cut_in_w_ratio = no_lane_cut_in_w_ratio
         self.lead_offset = lead_offset
         self.cut_in_outside = cut_in_outside
         self.cut_in_inside = cut_in_inside
@@ -92,9 +108,10 @@ class RiskAnalyzer:
                 best, best_y = tid, box[3]
         return best
 
-    def collision_level(self, tid: int, box, frame_w: int) -> tuple[str, float | None]:
+    def collision_level(self, tid: int, box, frame_w: int, lane_ok: bool = True) -> tuple[str, float | None]:
         """'none' / 'warning' / 'danger' plus the TTC in seconds."""
-        if (box[2] - box[0]) < frame_w * self.min_box_w_ratio:
+        min_w = self.min_box_w_ratio if lane_ok else max(self.min_box_w_ratio, self.no_lane_collision_w_ratio)
+        if (box[2] - box[0]) < frame_w * min_w:
             return "none", None  # too far/small for a stable scale estimate
         ttc = self.kin[tid].ttc()
         if ttc is None:
@@ -128,10 +145,11 @@ class RiskAnalyzer:
             return "slowing" if k > 0.12 else "moving"
         return None
 
-    def cut_in(self, tid: int, box, frame_w: int, t: float) -> str | None:
+    def cut_in(self, tid: int, box, frame_w: int, t: float, lane_ok: bool = True) -> str | None:
         """'cut_in_left' / 'cut_in_right' when a vehicle moves from beside us into our lane."""
         kin = self.kin[tid]
-        if (box[2] - box[0]) < frame_w * self.min_box_w_ratio * 1.3 or t - kin.last_cut_in < self.cut_in_cooldown_s:
+        min_w = self.min_box_w_ratio * 1.3 if lane_ok else max(self.min_box_w_ratio * 1.3, self.no_lane_cut_in_w_ratio)
+        if (box[2] - box[0]) < frame_w * min_w or t - kin.last_cut_in < self.cut_in_cooldown_s:
             return None
         offs = list(kin.offsets)
         if len(offs) < 5:

@@ -125,6 +125,49 @@ def find_usb_camera(attempts: int = 3) -> str | None:
     return None
 
 
+# Frame width of each framesize name (esp32-camera resolution table)
+FRAME_WIDTHS = {"QVGA": 320, "CIF": 400, "HVGA": 480, "VGA": 640, "SVGA": 800, "XGA": 1024, "HD": 1280,
+                "SXGA": 1280, "UXGA": 1600, "FHD": 1920, "QXGA": 2048}
+
+
+class SettingsKeeper:
+    """Keeps the camera on the configured settings.
+
+    After a reboot (power dip, USB re-enumeration) the camera comes back with its own
+    defaults (QVGA) and the settings sent once at start-up are lost: on 2026-10-06 the
+    stream stopped for 30 s and the rest of the drive was analysed at 320x240. Settings are
+    therefore re-sent on every (re)connection, after a stall, and when frames keep arriving
+    with a width other than the configured one.
+    """
+
+    def __init__(self, mismatch_frames: int = 10, min_interval_s: float = 5.0):
+        self.settings: dict | None = None
+        self.expected_w: int | None = None
+        self.mismatch_frames = mismatch_frames
+        self.min_interval_s = min_interval_s
+        self.reapplied = 0
+        self._mismatch = 0
+        self._last_apply = -1e9
+
+    def set(self, settings: dict) -> None:
+        self.settings = dict(settings)
+        fs = settings.get("framesize")
+        self.expected_w = FRAME_WIDTHS.get(fs.upper()) if isinstance(fs, str) else None
+        self._mismatch = 0
+
+    def applied(self, now: float) -> None:
+        self._last_apply = now
+        self._mismatch = 0
+
+    def frame(self, width: int, now: float) -> bool:
+        """True when the settings should be sent again because frames have the wrong width."""
+        if self.settings is None or self.expected_w is None or width == self.expected_w:
+            self._mismatch = 0
+            return False
+        self._mismatch += 1
+        return self._mismatch >= self.mismatch_frames and now - self._last_apply >= self.min_interval_s
+
+
 class UsbCamStream:
     def __init__(self, port: str | None = None, reconnect_s: float = 2.0, on_jpeg=None):
         self.port = port
@@ -133,6 +176,8 @@ class UsbCamStream:
         self.connected = False
         self.received = 0
         self.status: dict = {}
+        self.reconnects = 0
+        self.keeper = SettingsKeeper()
         self._pending_cmds: list[bytes] = []
         self._frame: np.ndarray | None = None
         self._t = 0.0
@@ -150,8 +195,17 @@ class UsbCamStream:
             self._pending_cmds.append((cmd.strip() + "\n").encode())
 
     def apply_settings(self, settings: dict) -> None:
+        """Send the settings now, and again whenever the camera may have lost them."""
+        self.keeper.set(settings)
+        self._queue_settings()
+
+    def _queue_settings(self) -> None:
         from .camera_ctl import FRAMESIZES
 
+        settings = self.keeper.settings
+        if not settings:
+            return
+        self.keeper.applied(time.time())
         order = ["framesize", "quality"] + [k for k in settings if k not in ("framesize", "quality")]
         for key in order:
             if key in settings:
@@ -177,6 +231,7 @@ class UsbCamStream:
             log.info("USB camera streaming from %s", port)
             parser = PacketParser()
             last_rx = time.time()
+            self._queue_settings()  # (re)connected: the camera may have rebooted with defaults
             try:
                 s.write(b"S\n")
                 while not self._stop.is_set():
@@ -190,6 +245,7 @@ class UsbCamStream:
                         last_rx = now
                     elif now - last_rx > 3.0:
                         s.write(b"S\n")  # camera rebooted or stopped after a stall: ask again
+                        self._queue_settings()
                         last_rx = now
                     for kind, _, payload in parser.feed(data):
                         if kind == b"CSDJ":
@@ -201,6 +257,11 @@ class UsbCamStream:
                             self.on_jpeg(now, payload)
                         img = cv2.imdecode(np.frombuffer(payload, np.uint8), cv2.IMREAD_COLOR)
                         if img is not None:
+                            if self.keeper.frame(img.shape[1], now):
+                                log.warning("USB camera: %d px wide frames, expected %d; re-sending settings",
+                                            img.shape[1], self.keeper.expected_w)
+                                self.keeper.reapplied += 1
+                                self._queue_settings()
                             with self._lock:
                                 self._frame, self._t = img, now
                                 self._seq += 1
@@ -210,6 +271,7 @@ class UsbCamStream:
                     pass
             except Exception as e:  # cable pulled, camera reset (port re-enumerates)
                 self.connected = False
+                self.reconnects += 1
                 log.warning("USB camera error (%s); reconnecting", e)
             finally:
                 s.close()

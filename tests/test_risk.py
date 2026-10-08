@@ -84,3 +84,32 @@ def test_no_cut_in_for_car_staying_beside():
         t = i * 0.1
         r.update_track(5, box_at(180, 560, 150), t, POLY, H)
         assert r.cut_in(5, box_at(180, 560, 150), W, t) is None
+
+
+def test_own_hood_is_not_a_vehicle():
+    from csd.risk import is_own_hood
+    assert is_own_hood((0, 566, 1024, 767), 1024, 768)        # bonnet, 2026-10-06 recording
+    assert is_own_hood((0, 166, 320, 239), 320, 240)          # same at QVGA
+    assert not is_own_hood((290, 535, 873, 767), 1024, 768)   # a real bus right in front
+    assert not is_own_hood((367, 305, 458, 385), 1024, 768)   # a car ahead
+
+
+def test_cut_in_needs_a_near_vehicle_without_lane_lines():
+    # Same far-ish car (15% of the width) as test_cut_in_from_left: allowed with lane lines,
+    # but without them only vehicles at least 15% wide count -> a 140 px car is ignored.
+    r = RiskAnalyzer()
+    for i in range(20):
+        t = i * 0.1
+        cx = 180 if t < 1.0 else 180 + (t - 1.0) * 400
+        r.update_track(5, box_at(cx, 560, 140), t, POLY, H)
+        assert r.cut_in(5, box_at(cx, 560, 140), W, t, lane_ok=False) is None
+
+
+def test_no_collision_warning_for_far_car_without_lane_lines():
+    r = RiskAnalyzer()
+    for i in range(10):  # 5.5 -> 9.4% wide, growing fast (TTC ~1.7 s)
+        t = i * 0.1
+        r.update_track(1, box_at(500, 500, 55 * math.exp(0.6 * t)), t, POLY, H)
+    box = box_at(500, 500, 55 * math.exp(0.6 * 0.9))
+    assert r.collision_level(1, box, W, lane_ok=True)[0] == "danger"
+    assert r.collision_level(1, box, W, lane_ok=False)[0] == "none"

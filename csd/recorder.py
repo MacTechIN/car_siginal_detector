@@ -30,6 +30,7 @@ class Recorder:
         self.t_first: float | None = None
         self.t_last = 0.0
         self.full = False
+        self.gap_s = 2.0
         self.meta: dict = {"started": time.strftime("%Y-%m-%dT%H:%M:%S"), "reconnects": 0, "gaps": []}
 
     @classmethod
@@ -44,6 +45,10 @@ class Recorder:
         with self._lock:
             if self.t_first is None:
                 self.t_first = t
+            elif t - self.t_last >= self.gap_s:
+                # Stream interruption (camera reset, cable): kept so a replay can tell.
+                self.meta["gaps"].append({"after_frame": self.frames - 1, "t_unix": round(self.t_last, 3),
+                                          "seconds": round(t - self.t_last, 2)})
             name = f"{self.frames:06d}.jpg"
             with open(self.folder / name, "wb") as f:
                 f.write(jpg)

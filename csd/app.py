@@ -18,10 +18,10 @@ from .camera_ctl import apply_settings
 from .detect import Detection, Detector
 from .ego_motion import EgoMotion
 from .lanes import LaneDetector
-from .risk import VEHICLE_CLASSES, RiskAnalyzer
+from .risk import VEHICLE_CLASSES, RiskAnalyzer, is_own_hood
 from .state import EventLog, StateSmoother
 from .stream import FileSource, MjpegStream
-from .traffic_light import FlashTracker, classify_light
+from .traffic_light import FlashTracker, classify_light, lane_control_row
 from .tts import INFO, AlertQueue, NullSpeaker, SapiSpeaker
 from .vehicle_lights import VehicleLightTracker
 
@@ -97,6 +97,8 @@ class Pipeline:
         self._scene_counts: dict[str, int] = {}
         self._scene_smoother = StateSmoother(window_s=2.0, hold_s=1.0)
         self.last_lane = None
+        self._lane_seen_t = -1e9      # last time both lane lines were found
+        self.lane_signal_ids: set[int] = set()  # highway lane-control signals in view
         self.fps = 0.0
 
     # ----------------------------------------------------------------- helpers
@@ -117,7 +119,12 @@ class Pipeline:
         H, W = frame.shape[:2]
         self.last_frame_w = W
         dets = self.detector(frame)
+        # Our own bonnet is detected as a car and would become the lead vehicle.
+        dets = [d for d in dets if not (d.name in VEHICLE_CLASSES and is_own_hood(d.box, W, H))]
         lane = self.last_lane = self.lanes.update(frame)
+        if lane.detected:
+            self._lane_seen_t = t
+        lane_ok = t - self._lane_seen_t <= 1.0
 
         # Ego motion (background flow with objects masked out)
         ego_raw = self.ego.update(frame, t, [d.box for d in dets])
@@ -148,6 +155,8 @@ class Pipeline:
             self.risk.update_track(tid, box, t, lane.polygon, H)
         self.lead_id = self.risk.select_lead(vehicles, lane.polygon, H)
 
+        self.lane_signal_ids = lane_control_row(
+            {d.tid: d.box for d in dets if d.name == "traffic_light" and d.tid >= 0})
         relevant_light = self.relevant_light = self._relevant_light(dets)
         for d in dets:
             if d.tid < 0:
@@ -156,7 +165,7 @@ class Pipeline:
             if d.name == "traffic_light":
                 self._traffic_light(d, ts, frame, t, speak=d.tid == relevant_light)
             elif d.name in VEHICLE_CLASSES:
-                self._vehicle(d, ts, frame, t, W, is_lead=d.tid == self.lead_id)
+                self._vehicle(d, ts, frame, t, W, is_lead=d.tid == self.lead_id, lane_ok=lane_ok)
 
         self._scene(dets, t)
         self._voice_labels(frame, dets, t)
@@ -184,11 +193,21 @@ class Pipeline:
         for d in dets:
             if d.name != "traffic_light" or d.tid < 0:
                 continue
+            if self._is_lane_signal(d.tid):
+                continue
             x1, y1, x2, y2 = d.box
             area = (x2 - x1) * (y2 - y1)
             if area > best_area:
                 best, best_area = d.tid, area
         return best
+
+    def _is_lane_signal(self, tid: int) -> bool:
+        """A lane-control signal showing green (or not read yet). Red ones stay traffic lights:
+        missing a "green" is harmless, missing a red is not."""
+        if tid not in self.lane_signal_ids:
+            return False
+        ts = self.tracks.get(tid)
+        return ts is None or ts.last_pred in (None, "green")
 
     def _traffic_light(self, d: Detection, ts: _TrackState, frame, t: float, speak: bool) -> None:
         x1, y1, x2, y2 = (int(v) for v in d.box)
@@ -205,6 +224,8 @@ class Pipeline:
                 return
             raw, weight = reading.state, max(reading.confidence, 0.2)
         ts.last_pred = raw
+        if self._is_lane_signal(d.tid):
+            return  # highway lane-control signal, not a junction light
         state = ts.flash.update(raw, t)
         confirmed = ts.light.update(state, t, weight=weight)
         if confirmed:
@@ -212,7 +233,8 @@ class Pipeline:
             if speak:
                 self._say(msg.traffic_light(confirmed), key="traffic_light", cooldown_s=1.0)
 
-    def _vehicle(self, d: Detection, ts: _TrackState, frame, t: float, W: int, is_lead: bool) -> None:
+    def _vehicle(self, d: Detection, ts: _TrackState, frame, t: float, W: int, is_lead: bool,
+                 lane_ok: bool = True) -> None:
         x1, y1, x2, y2 = d.box
         big_enough = (x2 - x1) >= W * self.cfg["vehicle_lights"]["min_box_w_ratio"]
 
@@ -230,7 +252,7 @@ class Pipeline:
                         self._say(msg.turn(part), key=f"lead_{part}", cooldown_s=6.0)
 
         # Cut-in: a vehicle moving from beside us into our lane
-        side = self.risk.cut_in(d.tid, d.box, W, t)
+        side = self.risk.cut_in(d.tid, d.box, W, t, lane_ok=lane_ok)
         if side:
             self.events.emit(d.tid, d.name, side, force=True, channel="cut_in")
             self.last_risk = (t, "cut_in", f"{msg.cut_in(side)[0]} (ID {d.tid})")
@@ -240,7 +262,7 @@ class Pipeline:
             return
 
         # Collision risk from time-to-collision
-        level, ttc = self.risk.collision_level(d.tid, d.box, W)
+        level, ttc = self.risk.collision_level(d.tid, d.box, W, lane_ok=lane_ok)
         ts.ttc = ttc
         state ="collision_clear" if level == "none" else f"collision_{level} ttc={ttc:.1f}s"
         if level != "none" or ts.collision != "none":
@@ -496,7 +518,10 @@ def run(cfg: dict, source: str | None = None, max_seconds: float | None = None, 
             log.info("dashboard snapshot saved: %s", snapshot)
         src.stop()
         if recorder is not None:
-            meta = recorder.close(labels=dict(pipe.label_session.counts) if pipe.label_session else {})
+            extra = {"labels": dict(pipe.label_session.counts) if pipe.label_session else {}}
+            if hasattr(src, "keeper"):  # USB camera: reconnections and settings re-sent after resets
+                extra.update(reconnects=src.reconnects, settings_reapplied=src.keeper.reapplied)
+            meta = recorder.close(**extra)
             log.info("recording saved: %s (%d frames, %.0f s)", recorder.folder, meta["frames"], meta["duration_s"])
         if pipe.label_session is not None:
             log.info("voice labels this session: %s", dict(pipe.label_session.counts) or "none")
