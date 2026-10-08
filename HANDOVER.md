@@ -105,8 +105,8 @@ train.bat
 
 1. **단속 카메라 데이터 받기** (한 번, 반기마다 갱신)
    - data.go.kr에서 "전국무인교통단속카메라표준데이터"를 CSV로 내려받고:
-     `.\.venv\Scripts\python.exe toolsetch_cameras.py --file 내려받은파일.csv`
-   - 또는 같은 데이터의 오픈 API 활용 신청 후: `toolsetch_cameras.py --key <serviceKey>`
+     `.\.venv\Scripts\python.exe tools\fetch_cameras.py --file 내려받은파일.csv`
+   - 또는 같은 데이터의 오픈 API 활용 신청 후: `tools\fetch_cameras.py --key <serviceKey>`
      (API 주소는 표준데이터 명명 규칙으로 정했고 **아직 실제 키로 확인하지 않았습니다**.)
    - 결과는 `data/speed_cameras.csv`(git 제외)입니다.
 2. **휴대폰 GPS 연결**: NMEA를 TCP 서버로 내보내는 앱(예: Android "Share GPS" 포트 50000, iOS "GPS2IP" 11123)을 켜고 USB 테더링합니다.
