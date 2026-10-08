@@ -132,6 +132,21 @@ static void usbCamTask(void *) {
   }
 }
 
+// True when a USB host (the laptop) is clocking the native port, i.e. the cable carries
+// data and not only power. Waits up to `wait_ms` for the host's start-of-frame packets.
+bool usbHostPresent(uint32_t wait_ms) {
+  uint32_t t0 = millis();
+  uint32_t seen = 0;
+  while (millis() - t0 < wait_ms) {
+    seen = HWCDC::isPlugged() ? seen + 1 : 0;
+    if (seen >= 20) {  // 200 ms in a row: the SOF check can flap briefly
+      return true;
+    }
+    delay(10);
+  }
+  return false;
+}
+
 void startUsbStream() {
   usbCam.setRxBufferSize(256);
   usbCam.setTxBufferSize(16384);

@@ -300,3 +300,17 @@
 - 네이티브 USB 포트 로그: 스트리밍 시작 직후 `Guru Meditation Error: Core 0 panic'ed (Cache error) / Cache disabled but cached memory region accessed`.
 - 이후에는 명령을 보내지 않아도 부트로더 진입 직후 `rst:0x3 (RTC_SW_SYS_RST)`로 약 1초마다 재부팅을 반복했습니다. PC에서는 복구할 수 없어 전원 재연결이 필요합니다.
 - 기본 설정을 검증된 XGA·품질 12로 되돌렸습니다. UXGA는 카메라 복구 뒤 시험하고 나서 쓰기로 했습니다.
+
+## 18. 카메라 재부팅 원인: 전원 전압 강하(brownout) → 펌웨어 USB 전용 모드 (2026-10-08 16:10~16:45)
+
+- 펌웨어 확인: 보드의 부트로더·파티션·앱이 9/25 빌드(`cws_usb`)와 해시 일치 → 펌웨어 손상 아님.
+- 리본 케이블을 다시 꽂은 뒤 XGA 약 22fps로 11초 동작하다가 다시 재부팅을 반복했습니다.
+- 패닉 백트레이스를 빌드 ELF로 해석했습니다(addr2line):
+  - 재부팅 58회 중 52회의 Saved PC `0x40376fd9` = `rtc_brownout_isr_handler` → **전원 전압 강하 감지 리셋**.
+  - 전압 강하 시점은 Wi-Fi 시작(`wifi_init_process` → `wifi_nvs_init`)이었습니다.
+  - 앞서 본 `Cache error` 패닉은 brownout 처리기가 로그를 찍다가 생긴 2차 증상(`uart0_write_char`)입니다.
+- **펌웨어 수정(사용자 승인, 옵션 B):** 부팅 후 2.5초 안에 네이티브 USB에 호스트(노트북)가 보이면 Wi-Fi를 켜지 않습니다. 호스트가 없으면(전원만) 기존처럼 Wi-Fi를 켜되 송신 출력을 11dBm으로 낮춥니다.
+  - 빌드 `C:\Users\Public\esp32cam_build\cws_usbonly`, 앱 영역(0x10000)만 COM7로 기록, `Hash of data verified`.
+- **결과:** 좋아졌지만 해결되지 않았습니다. 40초 시험에서 마지막 15초는 20~24fps로 안정적이었으나, 앞 25초에는 brownout 리셋과 USB 포트 사라짐이 여러 번 있었습니다.
+  - Wi-Fi 없이 카메라 스트리밍만으로도 전압이 떨어지므로 **전원 공급(노트북 USB 포트·케이블) 또는 보드 하드웨어** 문제로 봅니다.
+  - 시험 당시 노트북은 **배터리 모드(74%, 방전 중), 균형 전원 계획**이었습니다.

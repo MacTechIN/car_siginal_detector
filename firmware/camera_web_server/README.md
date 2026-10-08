@@ -7,6 +7,10 @@ Board: ESP32-S3 N16R8 + OV3660, pin map `CAMERA_MODEL_ESP32S3_EYE`. Based on the
   JSON) + uint32 length + uint32 millis + payload; commands `S` start, `X` stop, `Q` status,
   `C <var> <val>`. Measured 2026-09-25: XGA 27.7 fps, UXGA 11.3 fps, ~650 KB/s ceiling. Logs stay on the
   CH340 port (UART0). PC side: `csd/usb_camera.py`.
+- **USB-only mode** (2026-10-08): if a USB host is on the native port within 2.5 s of boot, Wi-Fi is not
+  started at all (its start-up current browned the board out on laptop USB power: reboot loop with
+  `rtc_brownout_isr_handler` during `wifi_init`). Without a USB host (power only) Wi-Fi starts as below,
+  with TX power lowered to 11 dBm.
 - Wi-Fi: known networks (`WIFI_SSID`, optional `WIFI_SSID2`) 12 s each; otherwise opens its own access point
   `CSD-CAM` / `csdcam1234` at 192.168.4.1 (used in the car). mDNS name `esp32cam`.
 - `camera_config_t config = {}`: the example leaves the struct uninitialised; stack garbage caused

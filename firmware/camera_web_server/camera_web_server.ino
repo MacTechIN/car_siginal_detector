@@ -24,11 +24,14 @@ const char *password = WIFI_PASSWORD;
 #endif
 #define MDNS_NAME "esp32cam"
 #define WIFI_TIMEOUT_MS 12000
+#define USB_HOST_WAIT_MS 2500         // how long to look for a USB host before starting Wi-Fi
+#define WIFI_TX_POWER WIFI_POWER_11dBm  // lower than the 19.5 dBm default: smaller current peaks
 
 #include <ESPmDNS.h>
 
 bool connectWiFi(const char *net, const char *pass);
 void startUsbStream();
+bool usbHostPresent(uint32_t wait_ms);
 void startCameraServer();
 void setupLedFlash();
 
@@ -133,6 +136,15 @@ void setup() {
   startUsbStream();
   Serial.println("USB camera stream ready on the native USB port");
 
+  // Power: starting the Wi-Fi radio browned the board out on laptop USB power
+  // (2026-10-08: rtc_brownout_isr_handler during wifi_init -> reboot loop). With a USB host
+  // on the native port the video goes over the cable, so Wi-Fi stays off (USB-only mode).
+  if (usbHostPresent(USB_HOST_WAIT_MS)) {
+    Serial.println("USB host present: Wi-Fi off (USB-only mode)");
+    return;
+  }
+  Serial.println("No USB host: starting Wi-Fi");
+
   // Known networks first (home Wi-Fi, then an optional phone hotspot); if none is
   // reachable (e.g. in the car), start our own access point so a laptop can join it.
   WiFi.setHostname(MDNS_NAME);
@@ -155,6 +167,7 @@ void setup() {
     WiFi.disconnect(true);
     WiFi.mode(WIFI_AP);
     WiFi.softAP(AP_SSID, AP_PASSWORD);
+    WiFi.setTxPower(WIFI_TX_POWER);
     WiFi.setSleep(false);
     ip = WiFi.softAPIP();
     Serial.printf("No known WiFi: started access point '%s' (password '%s')\n", AP_SSID, AP_PASSWORD);
@@ -173,6 +186,7 @@ void setup() {
 bool connectWiFi(const char *net, const char *pass) {
   Serial.printf("WiFi connecting to '%s'", net);
   WiFi.mode(WIFI_STA);
+  WiFi.setTxPower(WIFI_TX_POWER);
   WiFi.begin(net, pass);
   for (int i = 0; i < WIFI_TIMEOUT_MS / 500 && WiFi.status() != WL_CONNECTED; i++) {
     delay(500);
