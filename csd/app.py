@@ -98,8 +98,22 @@ class Pipeline:
         self._scene_smoother = StateSmoother(window_s=2.0, hold_s=1.0)
         self.last_lane = None
         self._lane_seen_t = -1e9      # last time both lane lines were found
+        # Phone GPS + enforcement-camera guidance (attach_gps); voice only
+        self.gps = None
+        self.guidance = None
+        self.guide_state = None
         self.lane_signal_ids: set[int] = set()  # highway lane-control signals in view
         self.fps = 0.0
+
+    def attach_gps(self, gps, cameras) -> None:
+        """Use a started gps.GpsSource and a cameras.CameraIndex for speed/camera guidance."""
+        from .guidance import Guidance, GuidanceConfig
+
+        g = self.cfg.get("guidance", {})
+        gcfg = GuidanceConfig(**{k: v for k, v in g.items() if k in GuidanceConfig.__dataclass_fields__})
+        self.gps = gps
+        self.guidance = Guidance(cameras, say=lambda item, key, cd: self._say(item, key=key, cooldown_s=cd),
+                                 emit=lambda oid, name, state: self.events.emit(oid, name, state), cfg=gcfg)
 
     # ----------------------------------------------------------------- helpers
     def _say(self, item, key: str, cooldown_s: float | None = None) -> None:
@@ -128,6 +142,10 @@ class Pipeline:
 
         # Ego motion (background flow with objects masked out)
         ego_raw = self.ego.update(frame, t, [d.box for d in dets])
+        fix = self.gps.latest() if self.gps is not None else None
+        if fix is not None:
+            # GPS speed beats optical flow, which reads noise in dark frames as motion.
+            ego_raw = "stopped" if fix.speed_kmh < 3.0 else "moving"
         ego = self.ego_smoother.update(ego_raw if ego_raw != "unknown" else None, t)
         if ego:
             self.ego_state = ego
@@ -168,6 +186,8 @@ class Pipeline:
                 self._vehicle(d, ts, frame, t, W, is_lead=d.tid == self.lead_id, lane_ok=lane_ok)
 
         self._scene(dets, t)
+        if self.guidance is not None:
+            self.guide_state = self.guidance.update(fix, time.time())
         self._voice_labels(frame, dets, t)
         self._expire(t)
         self.last_dets = dets
@@ -398,6 +418,29 @@ def _wait_for_camera(cfg: dict, pipe: Pipeline, stop: dict, max_seconds: float |
     return None
 
 
+def _start_gps(cfg: dict, pipe: Pipeline, recorder) -> tuple:
+    """Phone GPS + camera data when `gps.enabled`; returns (GpsSource | None, GpsLog | None)."""
+    g = cfg.get("gps", {})
+    if not g.get("enabled"):
+        return None, None
+    from .cameras import CameraIndex, load_cameras
+    from .gps import GpsLog, GpsSource
+
+    path = cfgmod.resolve(cfg.get("guidance", {}).get("cameras", "data/speed_cameras.csv"))
+    try:
+        cams = load_cameras(path)
+        log.info("enforcement cameras: %d from %s (%d speed)", len(cams), path, sum(c.is_speed for c in cams))
+    except FileNotFoundError:
+        cams = []
+        log.warning("no camera data at %s (see tools/fetch_cameras.py); GPS speed only", path)
+        pipe.voice.say("단속 카메라 데이터가 없습니다", INFO, key="cam_data", cooldown_s=0)
+    gps_log = GpsLog(recorder.folder) if recorder is not None else None
+    gps = GpsSource(g.get("source", "tcp://gateway:50000"), on_fix=gps_log).start()
+    pipe.attach_gps(gps, CameraIndex(cams))
+    log.info("GPS: %s", g.get("source"))
+    return gps, gps_log
+
+
 def run(cfg: dict, source: str | None = None, max_seconds: float | None = None, speak: bool = True,
         show: bool | None = None, snapshot: str | None = None, realtime: bool = False,
         record: bool = False, label_voice: bool = False, name: str = "", fullscreen: bool = False,
@@ -471,6 +514,8 @@ def run(cfg: dict, source: str | None = None, max_seconds: float | None = None, 
         pipe.labeler = VoiceLabeler(cfgmod.resolve(vl.get("model", "models/vosk-model-small-ko-0.22")),
                                     is_muted=pipe.voice.speaking_recently, device=vl.get("device")).start()
 
+    gps, gps_log = _start_gps(cfg, pipe, recorder)
+
     start_msg = "차량 신호 감지를 시작합니다"
     if label_voice:
         start_msg += ". 신호등 상태를 말씀하시면 학습 데이터로 저장합니다"
@@ -517,6 +562,10 @@ def run(cfg: dict, source: str | None = None, max_seconds: float | None = None, 
             imwrite_any(Path(snapshot), screen)
             log.info("dashboard snapshot saved: %s", snapshot)
         src.stop()
+        if gps is not None:
+            gps.stop()
+        if gps_log is not None:
+            gps_log.close()
         if recorder is not None:
             extra = {"labels": dict(pipe.label_session.counts) if pipe.label_session else {}}
             if hasattr(src, "keeper"):  # USB camera: reconnections and settings re-sent after resets

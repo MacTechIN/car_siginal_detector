@@ -97,6 +97,22 @@ def build_state(pipe, now: float | None = None) -> dict:
         "scene": dict(pipe._scene_counts or {}), "caption": caption, "objects": objects,
         "events": [{"t": ev.t, "line": ev.line()} for ev in pipe.events.history[-12:]][::-1],
         "labeling": labeling,
+        "guidance": _guidance_state(pipe),
+    }
+
+
+def _guidance_state(pipe) -> dict | None:
+    """GPS speed, camera-zone limit and next camera (data only; the app does not draw it yet)."""
+    gs = getattr(pipe, "guide_state", None)
+    if gs is None:
+        return None
+    cam = gs.next_camera
+    return {
+        "gps_ok": gs.gps_ok,
+        "speed_kmh": round(gs.speed_kmh, 1) if gs.speed_kmh is not None else None,
+        "limit_kmh": gs.limit_kmh, "speeding": gs.speeding,
+        "next_camera": {"m": round(gs.next_camera_m), "limit_kmh": cam.limit, "place": cam.place}
+        if cam is not None and gs.next_camera_m is not None else None,
     }
 
 

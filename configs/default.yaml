@@ -70,6 +70,21 @@ voice_label:
   model: models/vosk-model-small-ko-0.22   # offline Korean speech recognition
   device: null               # microphone (sounddevice index or name); null = Windows default
 
+gps:
+  # Phone GPS over NMEA (the laptop has none). Android "Share GPS" as a TCP server (port
+  # 50000) or iOS "GPS2IP" (11123); with USB tethering the phone is the default gateway.
+  # Other sources: serial://COM8:9600 (Bluetooth), file://drive.nmea (replay).
+  enabled: false
+  source: tcp://gateway:50000
+
+guidance:
+  # Fixed enforcement cameras (공공데이터포털 전국무인교통단속카메라표준데이터), see
+  # tools/fetch_cameras.py. Voice guidance only.
+  cameras: data/speed_cameras.csv
+  announce_m: 500            # "500미터 앞 과속 단속 카메라, 제한속도 .."
+  near_m: 200                # "속도를 줄이세요" here if over the limit
+  margin_kmh: 5              # over the limit by more than this = speeding
+
 log_dir: logs
 record_dir: recordings
 show: false                  # OpenCV window with overlays

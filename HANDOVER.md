@@ -101,6 +101,20 @@ train.bat
 - 콘솔에 한글이 깨지면 `$env:PYTHONIOENCODING="utf-8"`를 먼저 실행합니다.
 - 로그는 콘솔과 `logs/events_*.log`에 남습니다.
 
+### 4.2b GPS 운전 안내 (단속 카메라·제한속도·과속, 음성만)
+
+1. **단속 카메라 데이터 받기** (한 번, 반기마다 갱신)
+   - data.go.kr에서 "전국무인교통단속카메라표준데이터"를 CSV로 내려받고:
+     `.\.venv\Scripts\python.exe toolsetch_cameras.py --file 내려받은파일.csv`
+   - 또는 같은 데이터의 오픈 API 활용 신청 후: `toolsetch_cameras.py --key <serviceKey>`
+     (API 주소는 표준데이터 명명 규칙으로 정했고 **아직 실제 키로 확인하지 않았습니다**.)
+   - 결과는 `data/speed_cameras.csv`(git 제외)입니다.
+2. **휴대폰 GPS 연결**: NMEA를 TCP 서버로 내보내는 앱(예: Android "Share GPS" 포트 50000, iOS "GPS2IP" 11123)을 켜고 USB 테더링합니다.
+3. `configs/default.yaml`(또는 `--config`)에서 `gps.enabled: true`. 주소는 기본 `tcp://gateway:50000`(테더링한 휴대폰 = 기본 게이트웨이). 블루투스는 `serial://COM8:9600`.
+- 안내: 반경 2km 카메라 수, "500미터 앞 과속 단속 카메라, 제한속도 60킬로미터", 200m 안에서 과속이면 "속도를 줄이세요", 카메라 구간에서 과속이면 "과속입니다"(6초 간격).
+- 제한속도는 **카메라 구간에서만** 압니다(도로별 제한속도 데이터 없음). 카메라 방향 정보가 없어 반대 차로 카메라도 안내될 수 있습니다.
+- GPS가 있으면 자차 정지/주행을 GPS 속도로 판단합니다(K2·K5 개선). 녹화 중이면 `gps.csv`가 함께 저장됩니다.
+
 ### 4.3 테스트
 
 ```powershell
