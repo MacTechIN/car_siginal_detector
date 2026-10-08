@@ -70,6 +70,9 @@ demo.bat
 # 출발 전 점검만
 .\.venv\Scripts\python.exe tools\preflight.py
 
+# 오늘 수집 자료 보고서 (data_log/<날짜>.md, 세션 폴더에 이벤트 로그 복사)
+.\.venv\Scripts\python.exe tools\session_report.py            # 날짜 생략 = 오늘
+
 # 녹화만 (검출 없이, 원본 JPEG + 시각)
 .\.venv\Scripts\python.exe tools\record.py --seconds 600 --name daytime
 
