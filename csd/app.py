@@ -319,6 +319,28 @@ class Pipeline:
         self.events.close()
 
 
+def _dpi_aware_100_percent() -> None:
+    """Draw the OpenCV monitor 1:1 in physical pixels. Without this, Windows display scaling
+    (e.g. 125 %) stretches the 1440x910 monitor to 1800x1137, taller than a 1200-px screen."""
+    try:
+        import ctypes
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)  # per-monitor DPI aware
+    except Exception:
+        pass
+
+
+def _fit_window(name: str) -> None:
+    """Shrink the monitor window (keeping its aspect) if it is larger than the screen."""
+    try:
+        import ctypes
+        from .dashboard import WIN_H, WIN_W
+        sw, sh = ctypes.windll.user32.GetSystemMetrics(0), ctypes.windll.user32.GetSystemMetrics(1)
+        s = min(1.0, (sw - 40) / WIN_W, (sh - 120) / WIN_H)
+        cv2.resizeWindow(name, int(WIN_W * s), int(WIN_H * s))
+    except Exception:
+        pass
+
+
 def _wait_for_camera(cfg: dict, pipe: Pipeline, stop: dict, max_seconds: float | None) -> tuple[str, str] | None:
     """Find the camera, retrying (with a spoken hint) until found, stopped or timed out.
 
@@ -326,7 +348,7 @@ def _wait_for_camera(cfg: dict, pipe: Pipeline, stop: dict, max_seconds: float |
     cable (laptop Wi-Fi stays on the internet), then Wi-Fi.
     """
     from .discover import find_camera
-    from .usb_camera import find_usb_camera
+    from .usb_camera import find_usb_camera, list_candidate_ports
 
     cam = cfg["camera"]
     transport = cam.get("transport", "auto")
@@ -336,6 +358,12 @@ def _wait_for_camera(cfg: dict, pipe: Pipeline, stop: dict, max_seconds: float |
             port = find_usb_camera()
             if port:
                 return "usb", port
+            if list_candidate_ports():
+                # The camera's USB port is present but not answering yet (camera booting, or the
+                # port still being released by the previous run): retry USB quickly instead of
+                # spending seconds on a Wi-Fi subnet scan.
+                time.sleep(1.0)
+                continue
         if transport in ("auto", "wifi"):
             base = find_camera(cam["base_url"], allow_scan=cam.get("scan_subnet", True))
             if base:
@@ -431,7 +459,9 @@ def run(cfg: dict, source: str | None = None, max_seconds: float | None = None, 
         from .dashboard import Dashboard
         dashboard = Dashboard()
         if show:
+            _dpi_aware_100_percent()
             cv2.namedWindow("car_siginal_detector", cv2.WINDOW_NORMAL)
+            _fit_window("car_siginal_detector")
             if fullscreen:
                 cv2.setWindowProperty("car_siginal_detector", cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
 

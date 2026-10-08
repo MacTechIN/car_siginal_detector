@@ -55,6 +55,43 @@ public partial class MainWindow : Window
         _timer.Start();
         AppendLog($"[앱] 프로젝트: {root}");
         Loaded += (_, _) => ApplyCommandLine();
+        SourceInitialized += (_, _) => ApplyUiScale();
+    }
+
+    // ------------------------------------------------------------------ 100% scale
+    // Windows display scaling (e.g. 125 %) would make this 1480x940 layout 1850x1175 physical
+    // pixels, taller than a 1920x1200 laptop screen. The UI is drawn at a fixed ratio of physical
+    // pixels instead: 1.0 = 100 % (default), override with --ui-scale (e.g. 1.25).
+    private const double DesignWidth = 1480, DesignHeight = 940;
+    private double _uiFactor = 1.0;
+
+    private double UiScaleArg()
+    {
+        var args = Environment.GetCommandLineArgs();
+        var i = Array.IndexOf(args, "--ui-scale");
+        return i >= 0 && i + 1 < args.Length && double.TryParse(args[i + 1],
+            System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var v) && v > 0.3
+            ? v : 1.0;
+    }
+
+    private void ApplyUiScale()
+    {
+        var dpi = VisualTreeHelper.GetDpi(this).DpiScaleX;   // 1.25 at 125 %
+        var factor = _uiFactor = UiScaleArg() / dpi;         // DIP -> physical ratio wanted
+        DangerBorder.LayoutTransform = new ScaleTransform(factor, factor);
+        var work = SystemParameters.WorkArea;                // in DIPs
+        Width = Math.Min(DesignWidth * factor, work.Width);
+        Height = Math.Min(DesignHeight * factor, work.Height);
+        MinWidth = Math.Min(1100 * factor, work.Width);
+        MinHeight = Math.Min(700 * factor, work.Height);
+        Left = work.Left + (work.Width - Width) / 2;
+        Top = work.Top + (work.Height - Height) / 2;
+    }
+
+    protected override void OnDpiChanged(DpiScale oldDpi, DpiScale newDpi)
+    {
+        base.OnDpiChanged(oldDpi, newDpi);
+        ApplyUiScale();  // moved to a monitor with a different scaling
     }
 
     /// <summary>
@@ -84,8 +121,13 @@ public partial class MainWindow : Window
 
     private void SaveSnapshot(string file)
     {
+        // The root carries the 100 % scale transform; render it at the monitor DPI so the PNG has
+        // the same physical pixels as the window (e.g. 1480x940).
         var el = (FrameworkElement)Content;
-        var rtb = new RenderTargetBitmap((int)el.ActualWidth, (int)el.ActualHeight, 96, 96, PixelFormats.Pbgra32);
+        var dpi = VisualTreeHelper.GetDpi(this);
+        int w = (int)Math.Round(el.ActualWidth * _uiFactor * dpi.DpiScaleX);
+        int h = (int)Math.Round(el.ActualHeight * _uiFactor * dpi.DpiScaleY);
+        var rtb = new RenderTargetBitmap(w, h, 96 * dpi.DpiScaleX, 96 * dpi.DpiScaleY, PixelFormats.Pbgra32);
         rtb.Render(el);
         var enc = new PngBitmapEncoder();
         enc.Frames.Add(BitmapFrame.Create(rtb));

@@ -4,7 +4,7 @@
         Title="운전 상황 모니터 — car_siginal_detector"
         Width="1480" Height="940" MinWidth="1100" MinHeight="700"
         Background="{StaticResource Bg}" FontFamily="Malgun Gothic"
-        WindowStartupLocation="CenterScreen" Closing="Window_Closing" KeyDown="Window_KeyDown">
+        WindowStartupLocation="Manual" Closing="Window_Closing" KeyDown="Window_KeyDown">
     <Border x:Name="DangerBorder" BorderThickness="0" BorderBrush="#FF2020">
         <Grid>
             <Grid.RowDefinitions>

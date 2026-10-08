@@ -170,7 +170,15 @@ class EngineServer:
                 else:
                     self._send(404, b"not found", "text/plain")
 
-        self._httpd = ThreadingHTTPServer((self.host, self.port), Handler)
+        class QuietServer(ThreadingHTTPServer):
+            def handle_error(self, request, client_address):
+                # The app gave up waiting (timeout) or closed: not worth a traceback in the log.
+                import sys
+                if isinstance(sys.exc_info()[1], (ConnectionAbortedError, ConnectionResetError, BrokenPipeError)):
+                    return
+                super().handle_error(request, client_address)
+
+        self._httpd = QuietServer((self.host, self.port), Handler)
         self._httpd.daemon_threads = True
         threading.Thread(target=self._httpd.serve_forever, name="engine-http", daemon=True).start()
         log.info("engine server on http://%s:%d", self.host, self.port)

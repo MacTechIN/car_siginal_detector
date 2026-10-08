@@ -14,7 +14,8 @@ namespace CsdApp;
 /// </summary>
 public sealed class Engine : IDisposable
 {
-    private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(2) };
+    // Generous timeout: while the engine loads models on the CPU it can answer slowly.
+    private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(5) };
     private Process? _proc;
 
     public string ProjectRoot { get; }
