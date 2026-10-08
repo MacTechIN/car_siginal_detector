@@ -50,6 +50,27 @@ class _TrackState:
         self.last_seen = 0.0
 
 
+def _lane_model(ln: dict):
+    """TwinLiteNet lane model on a background thread, when its ONNX file is present."""
+    path = ln.get("model")
+    if not path or not cfgmod.resolve(path).exists():
+        if path:
+            log.info("lane model %s not found (tools/fetch_models.py --lanes); classical lanes only", path)
+        return None
+    try:
+        from .lane_model import AsyncLaneModel, TwinLiteNet
+
+        def build():
+            return TwinLiteNet(cfgmod.resolve(path), tuple(ln.get("model_input", (320, 192))),
+                               ln.get("model_threads", 2), ln.get("model_device", "GPU"),
+                               cache_dir=cfgmod.resolve("models/ov_cache"))
+        log.info("lane model: %s every %.1fs (loading in the background)", path, ln.get("model_every_s", 0.5))
+        return AsyncLaneModel(build, ln.get("model_every_s", 0.5))
+    except Exception as e:
+        log.warning("lane model disabled: %s", e)
+        return None
+
+
 class Pipeline:
     def __init__(self, cfg: dict, speak: bool = True):
         self.cfg = cfg
@@ -57,7 +78,8 @@ class Pipeline:
         self.detector = Detector(str(cfgmod.resolve(d["model"])), d["imgsz"], d["conf"], d["device"],
                                  cfgmod.resolve(d["tracker"]))
         ln = cfg["lanes"]
-        self.lanes = LaneDetector(ln["horizon_ratio"], ln["default_bottom_width"], ln["default_top_width"])
+        self.lanes = LaneDetector(ln["horizon_ratio"], ln["default_bottom_width"], ln["default_top_width"],
+                                  model=_lane_model(ln), model_max_age_s=ln.get("model_max_age_s", 3.0))
         rk = cfg["risk"]
         self.risk = RiskAnalyzer(ttc_warn=rk["ttc_warn"], ttc_danger=rk["ttc_danger"])
         self.ego = EgoMotion()
@@ -135,7 +157,7 @@ class Pipeline:
         dets = self.detector(frame)
         # Our own bonnet is detected as a car and would become the lead vehicle.
         dets = [d for d in dets if not (d.name in VEHICLE_CLASSES and is_own_hood(d.box, W, H))]
-        lane = self.last_lane = self.lanes.update(frame)
+        lane = self.last_lane = self.lanes.update(frame, t)
         if lane.detected:
             self._lane_seen_t = t
         lane_ok = t - self._lane_seen_t <= 1.0
@@ -352,6 +374,8 @@ class Pipeline:
         self.risk.drop_missing(set(self.tracks))
 
     def close(self) -> None:
+        if self.lanes.model is not None:
+            self.lanes.model.close()
         self._plate_pool.shutdown(wait=False, cancel_futures=True)
         if self.labeler is not None:
             self.labeler.stop()

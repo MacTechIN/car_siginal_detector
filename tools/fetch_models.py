@@ -2,6 +2,8 @@
 
   models/yolo26s.pt (and n/m on request)   Ultralytics COCO detector (AGPL-3.0)
   models/plates/*.pt                       sauce-hug/korean-license-plate-detector (Apache-2.0 code repo)
+  models/twinlitenet.onnx                  chequanghuy/TwinLiteNet lane lines + drivable area (MIT),
+                                           exported from pretrained/best.pth
 
 Usage: python tools/fetch_models.py [--detector yolo26s yolo26n]
 """
@@ -21,6 +23,38 @@ MODELS = ROOT / "models"
 PLATE_REPO = "https://huggingface.co/sauce-hug/korean-license-plate-detector/resolve/main"
 PLATE_FILES = ["plate_detect_v1", "vertex_detect_v1", "syllable_detect_v1"]
 VOSK_NAME = "vosk-model-small-ko-0.22"
+TWINLITE_ZIP = "https://github.com/chequanghuy/TwinLiteNet/archive/refs/heads/main.zip"
+
+
+def export_twinlitenet(dest: Path) -> None:
+    """Download TwinLiteNet (code + pretrained/best.pth) and export it to ONNX with a free
+    input size (the network is fully convolutional)."""
+    if dest.exists():
+        print(f"ok      {dest.relative_to(ROOT)}")
+        return
+    import tempfile
+
+    import torch
+
+    with tempfile.TemporaryDirectory(dir=dest.parent) as tmp:
+        zip_path = Path(tmp) / "twinlitenet.zip"
+        download(TWINLITE_ZIP, zip_path)
+        with zipfile.ZipFile(zip_path) as z:
+            z.extractall(tmp)
+        repo = Path(tmp) / "TwinLiteNet-main"
+        sys.path.insert(0, str(repo))
+        from model import TwinLite  # noqa: E402  (the repo's model definition)
+
+        net = TwinLite.TwinLiteNet()
+        state = torch.load(repo / "pretrained" / "best.pth", map_location="cpu")
+        net.load_state_dict({k.replace("module.", ""): v for k, v in state.items()})
+        net.eval()
+        axes = {2: "h", 3: "w"}
+        torch.onnx.export(net, torch.rand(1, 3, 360, 640), str(dest), input_names=["img"],
+                          output_names=["da", "ll"], opset_version=17, dynamo=False,
+                          dynamic_axes={"img": axes, "da": axes, "ll": axes})
+        sys.path.remove(str(repo))
+    print(f"ok      {dest.relative_to(ROOT)} (exported)")
 
 
 def download(url: str, dest: Path) -> None:
@@ -64,6 +98,8 @@ def main() -> int:
             z.extractall(MODELS)
         zip_path.unlink()
     print(f"ok      {vosk_dir.relative_to(ROOT)}")
+
+    export_twinlitenet(MODELS / "twinlitenet.onnx")
     return 0
 
 

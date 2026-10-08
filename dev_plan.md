@@ -103,7 +103,7 @@
 |---|---|---|
 | 4.1 | 음성 라벨 데이터로 `train.bat` 첫 학습 → 녹화본에서 규칙 판별과 비교. AI Hub 신호등 데이터(내국인, R&D)를 `data/extra_tl`에 추가 | research.md 3.4, 10장 |
 | 4.2 | 신호등 검출을 imgsz 960~1280 또는 상단 절반 SAHI 타일로 → 원거리 검출률 비교 | ATLAS, SAHI |
-| 4.3 | 차선: TwinLiteNet(+) OpenVINO 적용, 고전적 방법과 비교 | research.md 7장 |
+| 4.3 | 차선: TwinLiteNet(+) OpenVINO 적용, 고전적 방법과 비교 — 🟡 iGPU 10ms, 검출 3% → 64% (history 19). 실도로 실시간 확인 남음 | research.md 7장 |
 | 4.4 | 등화: TLD 방식 ResNet 분류기 (자체 라벨 수백 장) | TLD 2024 |
 | 4.5 | 번호판: PaddleOCR 한국어로 교차 검증, 저해상도 업스케일 비교 | |
 | 4.6 | YOLO 파인튜닝 (자체 영상 + AI Hub 차량 데이터) | |

@@ -23,6 +23,44 @@ def _color(d, pipe):
     return VEHICLE_COLOR
 
 
+# Lane paint as drawn on the video (BGR)
+PAINT = {"white": (255, 255, 255), "yellow": (0, 215, 255), "blue": (255, 140, 0)}
+
+
+def _lane_area(lane, H: int) -> np.ndarray:
+    """Ego-lane polygon to fill: the model's curves when present, else the straight one;
+    cut at the bonnet line."""
+    bottom = lane.hood_y or H
+    if lane.left_line is not None and lane.right_line is not None:
+        top = max(lane.left_line.y_top, lane.right_line.y_top)
+        ys = np.linspace(top, min(bottom, lane.left_line.y_bottom, lane.right_line.y_bottom), 16)
+        left = np.stack([lane.left_line.x_at(ys), ys], 1)
+        right = np.stack([lane.right_line.x_at(ys), ys], 1)[::-1]
+        return np.concatenate([left, right]).astype(np.int32)
+    poly = lane.polygon.astype(float).copy()
+    if bottom < H:
+        (lbx, lby), (ltx, lty), (rtx, rty), (rbx, rby) = poly
+        t = (bottom - lty) / max(lby - lty, 1e-6)
+        poly[0] = (ltx + (lbx - ltx) * t, bottom)
+        poly[3] = (rtx + (rbx - rtx) * t, bottom)
+    return poly.astype(np.int32)
+
+
+def _draw_paint_line(img: np.ndarray, line, W: int) -> None:
+    """A lane line in its paint colour; dashed paint is drawn dashed."""
+    color = PAINT.get(line.color, PAINT["white"])
+    thick = max(2, int(4 * W / 1024))
+    pts = line.points(32)
+    if not line.dashed:
+        cv2.polylines(img, [pts], False, (0, 0, 0), thick + 2, cv2.LINE_AA)  # outline for contrast
+        cv2.polylines(img, [pts], False, color, thick, cv2.LINE_AA)
+        return
+    for i in range(0, len(pts) - 1, 4):  # 2 segments on, 2 off
+        seg = pts[i:i + 3]
+        cv2.polylines(img, [seg], False, (0, 0, 0), thick + 2, cv2.LINE_AA)
+        cv2.polylines(img, [seg], False, color, thick, cv2.LINE_AA)
+
+
 def draw(frame: np.ndarray, dets, pipe) -> np.ndarray:
     img = frame.copy()
     H, W = img.shape[:2]
@@ -32,8 +70,12 @@ def draw(frame: np.ndarray, dets, pipe) -> np.ndarray:
         color = (0, 170, 0) if lane.detected else (90, 90, 90)
         if pipe.lane_smoother.confirmed and "departure" in pipe.lane_smoother.confirmed:
             color = (0, 170, 255)
-        cv2.fillPoly(overlay, [lane.polygon], color)
+        area = _lane_area(lane, H)
+        cv2.fillPoly(overlay, [area], color)
         img = cv2.addWeighted(overlay, 0.22, img, 0.78, 0)
+        for line in (lane.left_line, lane.right_line):
+            if line is not None:
+                _draw_paint_line(img, line, W)
         # Ego heading: arrow along the lane centre line
         (lbx, lby), (ltx, lty), (rtx, rty), (rbx, rby) = lane.polygon
         bottom = (int((lbx + rbx) / 2), int(H - 5))

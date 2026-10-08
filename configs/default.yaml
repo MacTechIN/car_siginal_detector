@@ -51,6 +51,14 @@ lanes:
   horizon_ratio: 0.55        # image row (fraction of height) of the horizon/vanishing area
   default_bottom_width: 0.9  # fallback ego-lane width at the bottom (fraction of width)
   default_top_width: 0.12
+  # Learned lane lines (TwinLiteNet, MIT): curves, paint colour, solid/dashed, bonnet line.
+  # tools/fetch_models.py --lanes; classical lanes are used when the file is missing.
+  model: models/twinlitenet.onnx
+  model_input: [320, 192]    # network input (w, h); 640x360 is sharper but ~4x slower
+  model_every_s: 0.5         # background thread, at most this often
+  model_device: GPU          # OpenVINO: GPU = Intel iGPU (~10 ms), CPU as fallback (~200 ms)
+  model_threads: 2
+  model_max_age_s: 3.0       # use a result up to this old (lane paint moves slowly in the image)
 
 risk:
   ttc_warn: 2.7              # s, pre-warning (Mobileye FCW "up to 2.7 s")
