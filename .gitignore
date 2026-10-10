@@ -16,3 +16,4 @@ firmware/**/wifi_secrets.h
 windows_app/**/bin/
 windows_app/**/obj/
 windows_app/publish/
+kernel.errors.txt
